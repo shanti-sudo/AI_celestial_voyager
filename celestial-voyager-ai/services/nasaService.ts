@@ -101,12 +101,18 @@ export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> 
         || assets.find(url => url.includes('~large') && isStandardImage(url))
         || assets.find(url => url.includes('~medium') && isStandardImage(url));
 
+      const lowResUrl = assets.find(url => url.includes('~small') && isStandardImage(url))
+        || assets.find(url => url.includes('~thumb') && isStandardImage(url))
+        || assets.find(url => url.includes('~medium') && isStandardImage(url))
+        || highResUrl;
+
       if (!highResUrl) {
         throw new Error("No high-resolution image asset found in fallback");
       }
 
       return {
         url: highResUrl,
+        analysisUrl: lowResUrl!,
         title: itemData.title || "Unknown Stellar Object",
         description: itemData.description || "Captured by deep space observation arrays.",
         date: itemData.date_created || new Date().toISOString()
@@ -137,6 +143,11 @@ export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> 
       || assets.find(url => url.includes('~large') && isStandardImage(url))
       || assets.find(url => url.includes('~medium') && isStandardImage(url));
 
+    const lowResUrl = assets.find(url => url.includes('~small') && isStandardImage(url))
+      || assets.find(url => url.includes('~thumb') && isStandardImage(url))
+      || assets.find(url => url.includes('~medium') && isStandardImage(url))
+      || highResUrl;
+
     if (!highResUrl) {
       // If no medium/large/orig found, skip this item (treat as error to trigger fallback or retry in a real loop)
       // For simple implementation, we throw to use global fallback, which we know is safe.
@@ -145,6 +156,7 @@ export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> 
 
     return {
       url: highResUrl,
+      analysisUrl: lowResUrl!,
       title: itemData.title || "Unknown Stellar Object",
       description: itemData.description || "Captured by deep space observation arrays.",
       date: itemData.date_created || new Date().toISOString()

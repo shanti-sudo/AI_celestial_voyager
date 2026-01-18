@@ -9,12 +9,13 @@ import { generateQuiz } from '../services/geminiService';
 interface Props {
   image: NASAImage;
   points: POI[];
+  onSectorComplete?: () => void;
 }
 
 const INTERACTION_RADIUS = 6; // percentage to enter/trigger
 const EXIT_RADIUS = 12; // percentage to exit/close (hysteresis)
 
-const GameWorld: React.FC<Props> = ({ image, points }) => {
+const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
   const [gameState, setGameState] = useState<GameState>({
     posX: 50,
     posY: 50,
@@ -42,6 +43,30 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
   // Responsive Alignment States
   const [imageSize, setImageSize] = useState({ width: 1920, height: 1080 }); // Default fallback
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+
+  // Audio Component: Synthesized "Ping" for interaction feedback
+  const playPing = useCallback((freq = 880, type: OscillatorType = 'sine', duration = 0.15) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    } catch (e) {
+      console.warn('Audio feedback failed:', e);
+    }
+  }, []);
 
   // Load image dimensions to calculate aspect ratio
   useEffect(() => {
@@ -186,12 +211,12 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
   useEffect(() => {
     if (exploredPOIs.size === validPoints.length && validPoints.length > 0 && !sectorCompleted) {
       setSectorCompleted(true);
+      playPing(880, 'sine', 0.2); // High-frequency success ping
+      onSectorComplete?.();
       // Trigger quiz generation
       const exploredPOIData = validPoints.filter(p => exploredPOIs.has(p.id));
       generateQuiz(exploredPOIData).then(questions => {
         setQuizQuestions(questions);
-        // Small delay before showing quiz for better UX
-        // setTimeout(() => setShowQuiz(true), 1000); // Removed auto-open per user request
       });
     }
   }, [exploredPOIs, points, sectorCompleted]);
@@ -242,7 +267,7 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-screen overflow-hidden cursor-none bg-black transition-colors duration-700 ${gameState.activePOI ? 'bg-cyan-950/20' : ''}`}
+      className={`relative w-full h-screen overflow-hidden bg-black transition-colors duration-700 ${gameState.activePOI ? 'bg-cyan-950/20' : ''}`}
     >
       {/* Skybox / State-Aware Background */}
       {/* Parallax Container: Moves opposite to player position to create depth */}
@@ -337,9 +362,9 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
                       left: `${poi.x}%`,
                       top: `${poi.y}%`,
                       // Smart Positioning: Offset from center of POI
-                      // Constrain max-height based on which side it's on
+                      // Constrain max-height based on which side it's on to prevent screen overflow
                       transform: `translate(${isFlippedX ? 'calc(-100% - 35px)' : '35px'}, ${isFlippedY ? 'calc(-100% + 20px)' : 'calc(20px)'})`,
-                      maxHeight: isFlippedY ? `${poi.y}%` : `${100 - poi.y}%`,
+                      maxHeight: isFlippedY ? `calc(${poi.y}% - 5%)` : `calc(95% - ${poi.y}%)`,
                       maxWidth: isFlippedX ? `${poi.x}vw` : `${100 - poi.x}vw`
                     }}
                   >
@@ -351,9 +376,42 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
                       </div>
                       <div className="text-[9px] font-mono text-cyan-400 animate-pulse border border-cyan-800 px-1 self-start mt-1">ACTIVE SCAN</div>
                     </div>
-                    <p className="text-slate-300 text-sm leading-relaxed font-normal antialiased whitespace-pre-wrap">
-                      {poi.description}
-                    </p>
+
+                    <div className="text-slate-300 text-sm leading-relaxed font-normal antialiased whitespace-pre-wrap space-y-3">
+                      {poi.description.split('\n').map((line, idx) => {
+                        const lowLine = line.toLowerCase().trim();
+                        const isPhysics = lowLine.includes('the physics') && lowLine.indexOf('the physics') < 3;
+                        const isStory = lowLine.includes('the story') && lowLine.indexOf('the story') < 3;
+                        const isProof = lowLine.includes('the proof') && lowLine.indexOf('the proof') < 3;
+
+                        if (isPhysics || isStory || isProof) {
+                          const colonIdx = line.indexOf(':');
+                          const label = colonIdx > -1 ? line.substring(0, colonIdx + 1) : (isPhysics ? 'The Physics:' : isStory ? 'The Story:' : 'The Proof:');
+                          const content = colonIdx > -1 ? line.substring(colonIdx + 1) : (colonIdx === -1 ? line.replace(/the (physics|story|proof):?/i, '') : '');
+
+                          let colorClass = 'text-cyan-400';
+                          let glowClass = 'drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]';
+
+                          if (isStory) {
+                            colorClass = 'text-fuchsia-400';
+                            glowClass = 'drop-shadow-[0_0_8px_rgba(232,121,249,0.8)]';
+                          } else if (isProof) {
+                            colorClass = 'text-emerald-400';
+                            glowClass = 'drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]';
+                          }
+
+                          return (
+                            <div key={idx} className="block mt-2 first:mt-0">
+                              <span className={`${colorClass} font-black uppercase tracking-wider ${glowClass} mr-2`}>
+                                {label}
+                              </span>
+                              <span className="text-slate-100">{content}</span>
+                            </div>
+                          );
+                        }
+                        return line.trim() ? <div key={idx}>{line}</div> : null;
+                      })}
+                    </div>
 
                     {poi.thoughtSignature && (
                       <div className="mt-3 p-2 rounded bg-cyan-950/40 border border-cyan-500/20">
@@ -394,14 +452,19 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
 
       {/* Top Left: Telemetry (Title Truncation Fixed, Fixed Width) */}
       {showHUD && (
-        <div className="absolute top-8 left-8 w-[196px] p-6 bg-slate-950/80 backdrop-blur-md border border-white/5 font-mono text-xs shadow-2xl ring-1 ring-cyan-500/20 z-[60] transition-opacity duration-300 animate-in fade-in slide-in-from-left-4">
+        <div className="absolute top-8 left-8 w-[196px] p-6 bg-slate-950/80 backdrop-blur-md border border-white/5 font-mono text-xs shadow-2xl ring-1 ring-cyan-500/20 z-[60] transition-opacity duration-300 animate-in fade-in slide-in-from-left-4 rounded-xl">
           <div className="text-cyan-400 font-black mb-3 tracking-widest text-[11px] border-b border-cyan-900 pb-2">VOYAGER TELEMETRY v2.6</div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
-            <div className="text-slate-500">POS_LAT:</div><div className="text-white text-right font-bold">{gameState.posX.toFixed(3)}°</div>
-            <div className="text-slate-500">POS_LNG:</div><div className="text-white text-right font-bold">{gameState.posY.toFixed(3)}°</div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 font-black">
+            <div className="text-cyan-500/90 text-[10px] tracking-tight">POS_LAT:</div><div className="text-white text-right drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]">{gameState.posX.toFixed(3)}°</div>
+            <div className="text-cyan-500/90 text-[10px] tracking-tight">POS_LNG:</div><div className="text-white text-right drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]">{gameState.posY.toFixed(3)}°</div>
           </div>
-          <div className="mt-4 text-[9px] text-slate-500 uppercase tracking-widest leading-relaxed break-words">
-            Target: <span className="text-white block mt-1">{image.title}</span>
+          <div className="mt-4 p-2 bg-white/5 rounded border border-white/5">
+            <div className="text-[10px] text-cyan-300 uppercase font-black tracking-widest leading-relaxed mb-1">
+              CURRENT TARGET:
+            </div>
+            <div className="text-white text-[11px] font-black leading-tight border-l-2 border-cyan-500 pl-2 py-0.5">
+              {image.title}
+            </div>
           </div>
 
           {/* Quiz Status - Highlighted */}
@@ -411,28 +474,42 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
                 setShowQuiz(true);
               }
             }}
-            className={`mt-4 pt-3 pb-2 px-2 -mx-2 rounded border transition-all duration-300 ${quizCompleted && quizScore
+            className={`mt-4 pt-4 pb-3 px-3 -mx-2 rounded-lg border-2 transition-all duration-500 overflow-hidden relative group ${quizCompleted && quizScore
               ? quizScore.score / quizScore.total >= 0.8
-                ? 'border-green-500/50 bg-green-950/20 shadow-[0_0_10px_rgba(34,197,94,0.3)] cursor-pointer hover:bg-green-950/40'
+                ? 'border-green-500/60 bg-green-950/30 shadow-[0_0_20px_rgba(34,197,94,0.4)] cursor-pointer hover:bg-green-950/50'
                 : quizScore.score / quizScore.total >= 0.5
-                  ? 'border-cyan-500/50 bg-cyan-950/20 shadow-[0_0_10px_rgba(34,211,238,0.3)] cursor-pointer hover:bg-cyan-950/40'
-                  : 'border-amber-500/50 bg-amber-950/20 shadow-[0_0_10px_rgba(251,191,36,0.3)] cursor-pointer hover:bg-amber-950/40'
+                  ? 'border-cyan-500/60 bg-cyan-950/30 shadow-[0_0_20px_rgba(34,211,238,0.4)] cursor-pointer hover:bg-cyan-950/50'
+                  : 'border-amber-500/60 bg-amber-950/30 shadow-[0_0_20px_rgba(251,191,36,0.4)] cursor-pointer hover:bg-amber-950/50'
               : sectorCompleted
-                ? 'border-cyan-500/50 bg-cyan-950/20 shadow-[0_0_10px_rgba(34,211,238,0.3)] animate-pulse cursor-pointer hover:bg-cyan-950/40 hover:scale-105'
-                : 'border-cyan-900/30 bg-transparent opacity-50 cursor-not-allowed'
+                ? 'border-cyan-400 bg-cyan-500/20 shadow-[0_0_30px_#22d3ee] animate-[pulse_2s_infinite] cursor-pointer hover:bg-cyan-500/30 scale-105 transition-transform'
+                : 'border-cyan-900/40 bg-transparent opacity-60 cursor-not-allowed'
               }`}>
-            <div className="text-[9px] text-cyan-400 uppercase tracking-wider mb-2 font-black">⚡ Knowledge Assessment</div>
+
+            {/* Animated accent for sector completed */}
+            {sectorCompleted && !quizCompleted && (
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-[progress-scan_2s_linear_infinite]" />
+            )}
+
+            <div className={`text-[10px] uppercase tracking-wider mb-2 font-black flex items-center gap-2 ${sectorCompleted ? 'text-cyan-300' : 'text-cyan-500/70'}`}>
+              <span className={sectorCompleted ? 'animate-bounce' : ''}>⚡</span> KNOWLEDGE ASSESSMENT
+            </div>
             {quizCompleted && quizScore ? (
-              <div className="text-white font-bold">
-                Score: <span className={`${quizScore.score / quizScore.total >= 0.8 ? 'text-green-400' : quizScore.score / quizScore.total >= 0.5 ? 'text-cyan-400' : 'text-amber-400'}`}>
+              <div className="text-white font-black text-sm">
+                SCORE: <span className={`${quizScore.score / quizScore.total >= 0.8 ? 'text-green-400' : quizScore.score / quizScore.total >= 0.5 ? 'text-cyan-400' : 'text-amber-400'}`}>
                   {quizScore.score}/{quizScore.total}
                 </span>
-                <span className="text-[8px] text-slate-400 ml-1">({Math.round((quizScore.score / quizScore.total) * 100)}%)</span>
+                <span className="text-[10px] text-slate-400 ml-2">({Math.round((quizScore.score / quizScore.total) * 100)}%)</span>
               </div>
             ) : sectorCompleted ? (
-              <div className="text-cyan-400 text-[9px] font-bold">🎯 Quiz Available</div>
+              <div className="text-cyan-300 text-[11px] font-black italic tracking-tighter animate-pulse">🎯 SECTOR BRIEFING READY</div>
             ) : (
-              <div className="text-white text-[9px]">Complete Exploration</div>
+              <div className="text-slate-400 text-[9px] font-mono">EXPLORATION IN PROGRESS...</div>
+            )}
+
+            {sectorCompleted && !quizCompleted && (
+              <div className="mt-2 text-[8px] text-cyan-400/80 font-bold uppercase tracking-widest text-right group-hover:text-white transition-colors">
+                Click to Initiate Sync →
+              </div>
             )}
           </div>
         </div>
@@ -532,26 +609,44 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
         </button>
       </div>
 
-      <div className="absolute top-12 right-8 text-right font-mono">
-        <div className="text-[10px] text-slate-500 uppercase font-black mb-1">
-          Sector Progress {sectorCompleted && <span className="text-green-400">✓ COMPLETE</span>}
-        </div>
-        <div className="flex gap-1.5 mt-1 justify-end">
-          {validPoints.map((p, i) => {
-            const isExplored = exploredPOIs.has(p.id);
-            const isActive = gameState.activePOI?.id === p.id;
-            return (
-              <div
-                key={i}
-                className={`w-4 h-1 rounded-sm transition-all duration-300 ${isActive
-                  ? 'bg-cyan-400 w-6 shadow-[0_0_8px_cyan]'
-                  : isExplored
-                    ? 'bg-green-500 shadow-[0_0_8px_lime]'
-                    : 'bg-slate-800'
-                  }`}
-              />
-            );
-          })}
+      {/* Sector Progress with Gradient Padding */}
+      <div className={`absolute top-8 right-8 p-4 rounded-xl backdrop-blur-md transition-all duration-500 border ${sectorCompleted
+        ? 'bg-cyan-500/10 border-cyan-400/50 shadow-[0_0_40px_rgba(34,211,238,0.2)]'
+        : 'bg-slate-950/60 border-white/5'
+        }`}
+        style={{
+          padding: '16px 24px',
+          background: sectorCompleted
+            ? 'linear-gradient(135deg, rgba(8, 145, 178, 0.2) 0%, rgba(15, 23, 42, 0.8) 100%)'
+            : 'rgba(15, 23, 42, 0.6)'
+        }}>
+        <div className="text-right font-mono">
+          <div className="text-[11px] text-slate-300 uppercase font-black mb-2 tracking-[0.2em] flex items-center justify-end gap-2">
+            {sectorCompleted && <span className="text-cyan-400 animate-pulse">●</span>}
+            SECTOR PROGRESS
+            {sectorCompleted && (
+              <span className="text-green-400 bg-green-950/50 px-2 py-0.5 rounded border border-green-500/30 text-[9px]">
+                ✓ COMPLETE
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2 mt-2 justify-end">
+            {validPoints.map((p, i) => {
+              const isExplored = exploredPOIs.has(p.id);
+              const isActive = gameState.activePOI?.id === p.id;
+              return (
+                <div
+                  key={i}
+                  className={`h-1.5 rounded-full transition-all duration-500 ${isActive
+                    ? 'bg-cyan-300 w-8 shadow-[0_0_12px_#22d3ee] animate-pulse'
+                    : isExplored
+                      ? 'bg-green-400 w-4 shadow-[0_0_8px_rgba(74,222,128,0.5)]'
+                      : 'bg-slate-800 w-3 opacity-30 shadow-inner'
+                    }`}
+                />
+              );
+            })}
+          </div>
         </div>
       </div>
 

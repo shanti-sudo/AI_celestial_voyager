@@ -19,6 +19,7 @@ export interface QuizQuestion {
 
 export interface NASAImage {
   url: string;
+  analysisUrl: string; // Low-res version for faster AI processing
   title: string;
   description: string;
   date: string;

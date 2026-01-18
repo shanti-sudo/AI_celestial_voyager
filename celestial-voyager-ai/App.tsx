@@ -19,6 +19,7 @@ const App: React.FC = () => {
   const [showMissionSelector, setShowMissionSelector] = useState(false);
   const [missionOptions, setMissionOptions] = useState<MissionOption[]>([]);
   const [isFetchingOptions, setIsFetchingOptions] = useState(false);
+  const [isSectorComplete, setIsSectorComplete] = useState(false);
 
   // Guard against duplicate initialization
   const isInitializing = React.useRef(false);
@@ -57,14 +58,15 @@ const App: React.FC = () => {
       }
 
       setError(null);
+      setIsSectorComplete(false); // Reset for new mission
       setLoadingStep(specificTopic ? `Targeting Sector: ${specificTopic}...` : 'Searching Star Charts...');
 
       // 1. Fetch metadata and URL from NASA (Using specific topic if provided)
       const nasaImg = await fetchSpaceImage(specificTopic);
 
       setLoadingStep('Calculating Warp Trajectory...');
-      // 2. Prepare for analysis
-      const base64 = await imageToBase64(nasaImg.url);
+      // 2. Prepare for analysis (Use low-res version for speed)
+      const base64 = await imageToBase64(nasaImg.analysisUrl);
 
       // 2.5 AI Sentry Validation (Visual Content Filter)
       // Skip validation for user-selected missions to improve load time
@@ -176,16 +178,18 @@ const App: React.FC = () => {
           key={`${image.url}-${missionId}`}
           image={image}
           points={points}
+          onSectorComplete={() => setIsSectorComplete(true)}
         />
       )}
 
       {/* New Mission Button - HUD Integrated */}
       <div className="absolute bottom-8 right-8 flex flex-col items-end gap-2 z-[60]">
-        <div className="text-[9px] text-cyan-500/50 font-mono uppercase tracking-[0.2em]">Navigation Command</div>
         <button
           onClick={startMissionDiscovery}
           disabled={isHyperjumping || isFetchingOptions || showMissionSelector}
-          className={`group relative overflow-hidden px-8 py-3 bg-slate-950 border border-cyan-500/30 text-cyan-400 transition-all duration-500 hover:border-cyan-400 hover:text-white hover:shadow-[0_0_20px_rgba(34,211,238,0.3)] rounded-sm disabled:opacity-50`}
+          className={`group relative overflow-hidden px-8 py-3 bg-slate-950 border transition-all duration-500 rounded-xl disabled:opacity-50 ${isSectorComplete
+            ? 'border-cyan-400 text-white shadow-[0_0_20px_rgba(34,211,238,0.5)] animate-pulse'
+            : 'border-cyan-500/30 text-cyan-400 hover:border-cyan-400 hover:text-white hover:shadow-[0_0_20px_rgba(34,211,238,0.3)]'}`}
         >
           <div className="absolute inset-0 bg-cyan-500/5 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
           <span className="relative z-10 font-black text-[11px] uppercase tracking-[0.25em]">
