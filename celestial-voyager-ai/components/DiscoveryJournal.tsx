@@ -38,14 +38,14 @@ const DiscoveryJournal: React.FC<Props> = ({ exploredPOIs, onClose }) => {
                                 key={poi.id}
                                 onClick={() => setSelectedPOI(poi)}
                                 className={`w-full text-left p-4 rounded-lg border transition-all duration-300 group ${selectedPOI?.id === poi.id
-                                        ? 'bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(8,145,178,0.2)]'
-                                        : 'bg-slate-900/20 border-white/5 hover:bg-slate-800/40 hover:border-white/10'
+                                    ? 'bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(8,145,178,0.2)]'
+                                    : 'bg-slate-900/20 border-white/5 hover:bg-slate-800/40 hover:border-white/10'
                                     }`}
                             >
                                 <div className="flex justify-between items-center mb-1">
                                     <span className={`text-[10px] font-black uppercase tracking-widest ${selectedPOI?.id === poi.id ? 'text-cyan-400' : 'text-slate-500 group-hover:text-cyan-400/70'
                                         }`}>
-                                        {poi.type}
+                                        {/* Type removed */}
                                     </span>
                                     {selectedPOI?.id === poi.id && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />}
                                 </div>
@@ -70,9 +70,7 @@ const DiscoveryJournal: React.FC<Props> = ({ exploredPOIs, onClose }) => {
 
                     {selectedPOI ? (
                         <div className="relative z-0 max-w-2xl mx-auto mt-8">
-                            <div className="inline-block px-3 py-1 bg-cyan-950/50 border border-cyan-500/30 rounded-full text-cyan-400 text-[10px] font-mono mb-4 uppercase tracking-widest">
-                                Classification: {selectedPOI.type}
-                            </div>
+                            {/* Classification Badge Removed */}
 
                             <h1 className="text-4xl font-black text-white mb-8 tracking-tight leading-tight drop-shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
                                 {selectedPOI.name}

@@ -185,6 +185,11 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
     };
   }, [isDragging, handleDrag]);
 
+  // Dynamic height calculation for Tooltip
+  const isTooltipFlipped = gameState.posY > 60;
+  // If flipped (above), max height is current Y (minus buffer). If normal (below), max height is 100 - Y (minus buffer).
+  const tooltipMaxHeight = isTooltipFlipped ? gameState.posY - 10 : 90 - gameState.posY;
+
   return (
     <div
       ref={containerRef}
@@ -272,18 +277,18 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
       {/* UI: Interactive Tooltip */}
       {gameState.activePOI && (
         <div
-          className="absolute z-[100] p-5 bg-slate-950/90 border-l-4 border-cyan-500 backdrop-blur-2xl rounded shadow-2xl max-w-sm transition-all duration-500 animate-in fade-in zoom-in-95"
+          className="absolute z-[100] p-5 bg-slate-950/90 border-l-4 border-cyan-500 backdrop-blur-2xl rounded shadow-2xl max-w-sm overflow-y-auto scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-transparent transition-all duration-500 animate-in fade-in zoom-in-95"
           style={{
             left: `${gameState.posX}%`,
             top: `${gameState.posY}%`,
-            // Smart Positioning:
-            // - If X > 60%, show tooltip to the LEFT (-100% width - 50px offset)
-            // - Otherwise, show to the RIGHT (50px offset)
-            // - Logic applied to Y axis to keep it centered or shift if too high/low
-            transform: `translate(${gameState.posX > 60 ? 'calc(-100% - 50px)' : '50px'}, ${gameState.posY > 80 ? '-100%' : gameState.posY < 20 ? '0%' : '-50%'})`
+            maxHeight: `${tooltipMaxHeight}vh`, // Use viewport height units
+            // Smart Positioning with robust boundary checks
+            // Horizontal: Flip to left if past 60% width
+            // Vertical: Flip to top (-100%) if past 60% height to prevent bottom overflow
+            // Standard: slightly offset to not cover the POI itself
+            transform: `translate(${gameState.posX > 60 ? 'calc(-100% - 20px)' : '20px'}, ${isTooltipFlipped ? '-100%' : '0%'})`
           }}
-        >
-          <div className="flex items-center justify-between mb-3">
+        >    <div className="flex items-center justify-between mb-3">
             <div className="flex flex-col gap-1">
               <h3 className="text-cyan-50 text-2xl font-black tracking-tight uppercase drop-shadow-[0_0_10px_rgba(8,145,178,0.8)]">
                 {gameState.activePOI.name}
@@ -307,15 +312,7 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
             </div>
           )}
 
-          <div className="mt-4 pt-3 border-t border-white/10">
-            <div className="flex justify-between items-center text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">
-              <span>Analysis Depth</span>
-              <span className="text-cyan-400">92.4%</span>
-            </div>
-            <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
-              <div className="h-full bg-cyan-500 animate-[loading_1.5s_ease-in-out_infinite]" style={{ width: '92%' }}></div>
-            </div>
-          </div>
+          {/* Analysis Depth Removed */}
         </div>
       )}
 

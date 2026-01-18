@@ -30,7 +30,7 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
   For each object, provide:
   - id: unique string
   - name: scientific or common name
-  - description: Narrative text representing "The Physics", "The Story", and "The Proof". STRICTLY follow this format: Start directly with "The Physics" content. Then double line break. Then "The Story: [content]". Then double line break. Then "The Proof: [content]".
+  - description: Narrative text representing "The Physics", "The Story", and "The Proof". STRICTLY follow this format: Start directly with "The Physics" content. Then on the IMMEDIATE NEXT LINE (single newline, no vertical gap), start "The Story: [content]". Then on the IMMEDIATE NEXT LINE, start "The Proof: [content]".
   - x: horizontal position as a percentage (0-100)
   - y: vertical position as a percentage (0-100)
   - type: one of ['star', 'nebula', 'galaxy', 'planet', 'other']
