@@ -36,11 +36,12 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
   - type: one of ['star', 'nebula', 'galaxy', 'planet', 'other']
   - thoughtSignature: A short string explaining your triangulation process (e.g. "Visual match confirmed against Hubble Catalog data for [Object Name]").
   
-  Make sure the coordinates accurately reflect the location of the objects in the image.`;
+  Make sure the coordinates accurately reflect the location of the objects in the image.
+  CRITICAL: DISTRIBUTE targets across the image. AVOID clustering. Ensure POIs are separated by at least 15% of the screen width from each other. Coordinate layout must be spacious.`;
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview", // Updated to user-requested model
+      model: "gemini-2.0-flash", // Reverted to stable model
       contents: [
         {
           parts: [
@@ -77,7 +78,46 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
 
     const jsonText = response.text;
     if (!jsonText) throw new Error("Empty response from AI");
-    return JSON.parse(jsonText);
+
+    let points: POI[] = JSON.parse(jsonText);
+
+    // POST-PROCESSING: Enforcement of Non-Overlap (Physics Repulsion)
+    const MIN_DISTANCE = 15; // Minimum percentage distance between POIs
+    const ITERATIONS = 3; // multiple passes to settle
+
+    for (let iter = 0; iter < ITERATIONS; iter++) {
+      for (let i = 0; i < points.length; i++) {
+        for (let j = i + 1; j < points.length; j++) {
+          const p1 = points[i];
+          const p2 = points[j];
+          const dx = p2.x - p1.x;
+          const dy = p2.y - p1.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < MIN_DISTANCE && dist > 0) {
+            // Calculate repulsion vector
+            const overlap = MIN_DISTANCE - dist;
+            const angle = Math.atan2(dy, dx);
+
+            // Move p2 away
+            const moveX = Math.cos(angle) * overlap;
+            const moveY = Math.sin(angle) * overlap;
+
+            p2.x += moveX;
+            p2.y += moveY;
+
+            // Keep within bounds (5-95%)
+            p2.x = Math.max(5, Math.min(95, p2.x));
+            p2.y = Math.max(5, Math.min(95, p2.y));
+          } else if (dist === 0) {
+            // Handle exact overlap with random nudge
+            p2.x += 5;
+          }
+        }
+      }
+    }
+
+    return points;
   } catch (error) {
     console.error("Gemini analysis error:", error);
     // Return fallback data so the game feature remains active even if API fails

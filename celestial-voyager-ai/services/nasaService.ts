@@ -7,16 +7,18 @@ import { NASAImage } from '../types';
 export const fetchSpaceImage = async (isRefresh = false): Promise<NASAImage> => {
   // Original API Logic Enabled
   // Stricter keywords focused on deep space structures
-  const keywords = ['nebula', 'galaxy', 'supernova remnants', 'star cluster', 'deep field', 'hubble legacy', 'james webb deep field', 'pillars of creation'];
+  // Stricter keywords focused on deep space structures
+  const keywords = ['nebula', 'spiral galaxy', 'elliptical galaxy', 'supernova remnant', 'globular cluster', 'open star cluster', 'planetary nebula', 'molecular cloud', 'dark nebula', 'james webb deep field', 'hubble ultra deep field', 'pillars of creation', 'carina nebula', 'orion nebula', 'tarantula nebula', 'whirlpool galaxy', 'sombrero galaxy'];
   const keyword = keywords[Math.floor(Math.random() * keywords.length)];
   const NASA_API_KEY = 'DEMO_KEY';
 
   // Banned terms preventing "people", "machines", or "launches"
   const BANNED_TERMS = [
-    'person', 'people', 'human', 'engineer', 'scientist', 'astronaut', 'crowd', 'face',
-    'rocket', 'launch', 'shuttle', 'rover', 'lander', 'spacecraft', 'satellite', 'module',
-    'iss', 'station', 'vehicle', 'laboratory', 'conference', 'meeting', 'building', 'facility',
-    'technician', 'employee', 'portrait', 'ceremony'
+    'person', 'people', 'human', 'engineer', 'scientist', 'astronaut', 'crowd', 'face', 'man', 'woman',
+    'technician', 'employee', 'portrait', 'ceremony', 'spacewalk', 'crew', 'suit', 'helmet',
+    'meeting', 'conference', 'laboratory', 'building', 'facility', 'center',
+    'diagram', 'chart', 'graph', 'plot', 'artist concept', 'illustration', 'artist\'s impression', 'animation',
+    'airplane', 'aircraft'
   ];
 
   const validateImageItem = (item: any): boolean => {
