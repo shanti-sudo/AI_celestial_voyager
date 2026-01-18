@@ -281,9 +281,11 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
         >
           {/* Image Layer */}
           <div
-            className="w-full h-full bg-cover bg-center transition-all duration-700 ease-out"
+            className="w-full h-full transition-all duration-700 ease-out"
             style={{
               backgroundImage: `url(${image.url})`,
+              backgroundSize: '100% 100%',
+              backgroundPosition: '0 0',
               filter: gameState.activePOI ? 'brightness(1.1) contrast(1.15)' : 'brightness(1) contrast(1)',
               // Scale removed from here to prevent drift
             }}

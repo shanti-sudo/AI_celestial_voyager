@@ -92,8 +92,9 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
     let points: POI[] = JSON.parse(jsonText);
 
     // POST-PROCESSING: Enforcement of Non-Overlap (Physics Repulsion)
-    const MIN_DISTANCE = 15; // Minimum percentage distance between POIs
-    const ITERATIONS = 3; // multiple passes to settle
+    // Moderated to ensure visual accuracy remains priority
+    const MIN_DISTANCE = 8; // Reduced from 15 to keep markers closer to visual features
+    const ITERATIONS = 2; // Reduced passes to minimize drift
 
     for (let iter = 0; iter < ITERATIONS; iter++) {
       for (let i = 0; i < points.length; i++) {
