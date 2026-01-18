@@ -4,12 +4,22 @@ import { NASAImage } from '../types';
 /**
  * Service to fetch high-resolution celestial imagery from the NASA Image and Video Library.
  */
-export const fetchSpaceImage = async (isRefresh = false): Promise<NASAImage> => {
+export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> => {
   // Original API Logic Enabled
   // Stricter keywords focused on deep space structures
-  // Stricter keywords focused on deep space structures
-  const keywords = ['nebula', 'spiral galaxy', 'elliptical galaxy', 'supernova remnant', 'globular cluster', 'open star cluster', 'planetary nebula', 'molecular cloud', 'dark nebula', 'james webb deep field', 'hubble ultra deep field', 'pillars of creation', 'carina nebula', 'orion nebula', 'tarantula nebula', 'whirlpool galaxy', 'sombrero galaxy'];
-  const keyword = keywords[Math.floor(Math.random() * keywords.length)];
+  // Stricter keywords focused on deep space structures AND Earth as requested
+  // Added Earth-specific terms for "latest happening" context
+  const keywords = [
+    // Deep Space
+    'nebula', 'spiral galaxy', 'elliptical galaxy', 'supernova remnant', 'globular cluster',
+    'open star cluster', 'planetary nebula', 'molecular cloud', 'dark nebula',
+    'james webb deep field', 'hubble ultra deep field', 'pillars of creation',
+    'carina nebula', 'orion nebula', 'tarantula nebula', 'whirlpool galaxy', 'sombrero galaxy',
+    // Earth / Recent Events
+    'earth from space', 'aurora borealis', 'hurricane view from space', 'earth limb',
+    'earth night lights', 'blue marble', 'atmosphere'
+  ];
+  const keyword = customTopic || keywords[Math.floor(Math.random() * keywords.length)];
   const NASA_API_KEY = 'DEMO_KEY';
 
   // Banned terms preventing "people", "machines", or "launches"
@@ -18,7 +28,8 @@ export const fetchSpaceImage = async (isRefresh = false): Promise<NASAImage> => 
     'technician', 'employee', 'portrait', 'ceremony', 'spacewalk', 'crew', 'suit', 'helmet',
     'meeting', 'conference', 'laboratory', 'building', 'facility', 'center',
     'diagram', 'chart', 'graph', 'plot', 'artist concept', 'illustration', 'artist\'s impression', 'animation',
-    'airplane', 'aircraft'
+    'airplane', 'aircraft', 'rocket', 'vehicle',
+    'hand', 'hands', 'leg', 'legs', 'finger', 'fingers', 'profile', 'selfie', 'body'
   ];
 
   const validateImageItem = (item: any): boolean => {
@@ -29,6 +40,7 @@ export const fetchSpaceImage = async (isRefresh = false): Promise<NASAImage> => 
 
   try {
     const page = Math.floor(Math.random() * 2) + 1; // Limit to first 2 pages for better relevancy
+    // Removed year_start filter as it was too restrictive and preventing valid images from being found
     const searchUrl = `https://images-api.nasa.gov/search?q=${encodeURIComponent(keyword)}&media_type=image&page=${page}`;
     const response = await fetch(searchUrl);
 
@@ -47,9 +59,58 @@ export const fetchSpaceImage = async (isRefresh = false): Promise<NASAImage> => 
     const validItems = items.filter(validateImageItem);
 
     if (validItems.length === 0) {
-      console.warn(`All images for '${keyword}' contained banned terms. Falling back to safe query.`);
-      // If strict filter removed everything, result might be null, triggering catch block fallback
-      throw new Error("Strict filter removed all candidates");
+      console.warn(`All images for '${keyword}' contained banned terms. Trying safer fallback keywords...`);
+      // Instead of throwing, try a safer fallback keyword that's less likely to have banned content
+      const safeFallbacks = ['nebula', 'galaxy cluster', 'deep space', 'star field', 'cosmic dust'];
+      const fallbackKeyword = safeFallbacks[Math.floor(Math.random() * safeFallbacks.length)];
+
+      // Retry with fallback keyword (without restrictive year filter)
+      const fallbackUrl = `https://images-api.nasa.gov/search?q=${encodeURIComponent(fallbackKeyword)}&media_type=image&page=1`;
+      const fallbackResponse = await fetch(fallbackUrl);
+
+      if (!fallbackResponse.ok || !fallbackResponse.json) {
+        throw new Error(`Fallback search also failed for: ${fallbackKeyword}`);
+      }
+
+      const fallbackData = await fallbackResponse.json();
+      const fallbackItems = fallbackData.collection.items || [];
+      const validFallback = fallbackItems.filter(validateImageItem);
+
+      if (validFallback.length === 0) {
+        throw new Error("Even fallback keywords returned no valid images");
+      }
+
+      // Use fallback items
+      const randomItem = validFallback[Math.floor(Math.random() * Math.min(validFallback.length, 20))];
+      const itemData = randomItem.data[0];
+
+      const assetManifestUrl = `${randomItem.href}${randomItem.href.includes('?') ? '&' : '?'}api_key=${NASA_API_KEY}`;
+      const assetResponse = await fetch(assetManifestUrl);
+
+      if (!assetResponse.ok) {
+        throw new Error(`NASA Asset Manifest error: ${assetResponse.status}`);
+      }
+
+      const assets: string[] = await assetResponse.json();
+      const isStandardImage = (url: string) => {
+        const lower = url.toLowerCase();
+        return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png');
+      };
+
+      const highResUrl = assets.find(url => url.includes('~orig') && isStandardImage(url))
+        || assets.find(url => url.includes('~large') && isStandardImage(url))
+        || assets.find(url => url.includes('~medium') && isStandardImage(url));
+
+      if (!highResUrl) {
+        throw new Error("No high-resolution image asset found in fallback");
+      }
+
+      return {
+        url: highResUrl,
+        title: itemData.title || "Unknown Stellar Object",
+        description: itemData.description || "Captured by deep space observation arrays.",
+        date: itemData.date_created || new Date().toISOString()
+      };
     }
 
     // Pick a random VALID item

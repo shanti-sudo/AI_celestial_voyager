@@ -2,6 +2,14 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { POI, QuizQuestion } from "../types";
 
+export interface MissionOption {
+  id: string;
+  topic: string;
+  title: string;
+  description: string;
+  type: 'DEEP_SPACE' | 'EARTH' | 'TRENDING';
+}
+
 export const analyzeSpaceImage = async (base64Image: string, imageTitle: string, imageDescription: string): Promise<POI[]> => {
   // Support both standard Vite env vars and the manual define in vite.config.ts
   const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
@@ -37,7 +45,9 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
   - thoughtSignature: A short string explaining your triangulation process (e.g. "Visual match confirmed against Hubble Catalog data for [Object Name]").
   
   Make sure the coordinates accurately reflect the location of the objects in the image.
-  CRITICAL: DISTRIBUTE targets across the image. AVOID clustering. Ensure POIs are separated by at least 15% of the screen width from each other. Coordinate layout must be spacious.`;
+  CRITICAL: DISTRIBUTE targets across the image. AVOID clustering.
+  SAFETY ZONE: Ensure all POI coordinates (x, y) are strictly within the 10-90 range.
+  Ensure POIs are separated by at least 15% of the screen width from each other. Coordinate layout must be spacious.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -106,9 +116,9 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
             p2.x += moveX;
             p2.y += moveY;
 
-            // Keep within bounds (5-95%)
-            p2.x = Math.max(5, Math.min(95, p2.x));
-            p2.y = Math.max(5, Math.min(95, p2.y));
+            // Keep within bounds (10-90%) - POI Safety Zone
+            p2.x = Math.max(10, Math.min(90, p2.x));
+            p2.y = Math.max(10, Math.min(90, p2.y));
           } else if (dist === 0) {
             // Handle exact overlap with random nudge
             p2.x += 5;
@@ -213,6 +223,73 @@ Return as JSON array of objects with:
   }
 };
 
+export const generateMissionOptions = async (): Promise<MissionOption[]> => {
+  const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
+
+  if (!apiKey || apiKey === 'DEMO_KEY') {
+    return [
+      { id: '1', topic: 'Nebula', title: 'Deep Space Nebula', description: 'Explore a random colorful nebula in deep space.', type: 'DEEP_SPACE' },
+      { id: '2', topic: 'Earth from Space', title: 'Orbital View', description: 'Observe Earth from a low-orbit perspective.', type: 'EARTH' },
+      { id: '3', topic: 'James Webb', title: 'JWST Discovery', description: 'See the latest from the James Webb Space Telescope.', type: 'TRENDING' }
+    ];
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  const seed = Date.now();
+  const prompt = `Generate 3 distinct, UNIQUE space exploration mission targets for a sci-fi interface. 
+  Random Seed context: ${seed}.
+  IMPORTANT: Avoid generic topics like "Nebula" or "Galaxy" alone. Be specific.
+  
+  Categories:
+  1. DEEP_SPACE: A specific, visually stunning Nebula, Galaxy, or Star Cluster (e.g., "Carina Nebula", "Sombrero Galaxy").
+  2. EARTH: A specific Earth phenomenon (e.g., "Aurora Australis", "Pacific Cyclone", "Sahara Dust Plume").
+  3. TRENDING: A current "hot topic" in space science, a famous historical mission, or a recent discovery (e.g., "Mars Perseverance Rover", "James Webb Deep Field", "Voyager 1 Signal", "Parker Solar Probe").
+  
+  Return JSON array of 3 objects with:
+  - id: unique string
+  - topic: The exact search string to query NASA's image database.
+  - title: A cool, sci-fi mission name.
+  - description: Very short, punchy briefing (max 12 words).
+  - type: One of ['DEEP_SPACE', 'EARTH', 'TRENDING']
+  
+  Ensure the TRENDING option is significantly different from common generic space terms.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              topic: { type: Type.STRING },
+              title: { type: Type.STRING },
+              description: { type: Type.STRING },
+              type: { type: Type.STRING, enum: ['DEEP_SPACE', 'EARTH', 'TRENDING'] }
+            },
+            required: ["id", "topic", "title", "description", "type"]
+          }
+        }
+      }
+    });
+
+    const jsonText = response.text;
+    if (!jsonText) throw new Error("Empty response from AI for missions");
+    return JSON.parse(jsonText);
+  } catch (error) {
+    console.warn("Mission generation failed, using fallbacks", error);
+    return [
+      { id: '1', topic: 'Spiral Galaxy', title: 'Galactic Core', description: 'Investigate a massive spiral galaxy.', type: 'DEEP_SPACE' },
+      { id: '2', topic: 'Blue Marble', title: 'Home Planet', description: 'Standard orbit survey of Earth.', type: 'EARTH' },
+      { id: '3', topic: 'Supernova', title: 'Stellar Remnant', description: 'Analyze the aftermath of a star explosion.', type: 'TRENDING' }
+    ];
+  }
+};
+
 // Fallback quiz questions
 const getFallbackQuiz = (exploredPOIs: POI[]): QuizQuestion[] => {
   if (exploredPOIs.length === 0) {
@@ -242,3 +319,50 @@ const getFallbackQuiz = (exploredPOIs: POI[]): QuizQuestion[] => {
     relatedPOI: poi.name
   }));
 };
+
+export const validateImageContent = async (base64Image: string): Promise<boolean> => {
+  const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
+
+  if (!apiKey || apiKey === 'DEMO_KEY') {
+    return true;
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  const prompt = `Analyze this image for a space exploration game background.
+  Strictly check for:
+  1. Humans or human faces.
+  2. Human body parts (hands, fingers, legs, silhouettes).
+  3. Man-made structures dominating the view (conference rooms, labs, rockets on launchpad).
+  
+  Question: Is this image free of humans, body parts, and non-space clutter?
+  Answer JSON: { "safe": boolean, "reason": "short string" }`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [{
+        parts: [
+          { text: prompt },
+          { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
+        ]
+      }]
+    });
+
+    const text = response.text;
+    const jsonMatch = text.match(/\{.*?\}/s);
+    if (jsonMatch) {
+      const result = JSON.parse(jsonMatch[0]);
+      if (!result.safe) {
+        console.warn("Image rejected by AI Sentry:", result.reason);
+        return false;
+      }
+      return true;
+    }
+    return true;
+  } catch (err) {
+    console.error("Validation error", err);
+    return true;
+  }
+};
+

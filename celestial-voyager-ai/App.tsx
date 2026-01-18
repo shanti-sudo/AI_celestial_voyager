@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { fetchSpaceImage, imageToBase64 } from './services/nasaService';
-import { analyzeSpaceImage } from './services/geminiService';
+import { analyzeSpaceImage, generateMissionOptions, validateImageContent, MissionOption } from './services/geminiService';
 import GameWorld from './components/GameWorld';
+import MissionSelector from './components/MissionSelector';
 import { NASAImage, POI } from './types';
 
 const App: React.FC = () => {
@@ -14,49 +15,106 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [missionId, setMissionId] = useState(0);
 
-  const initGame = async (isManualRefresh = false) => {
+  // Mission Selection State
+  const [showMissionSelector, setShowMissionSelector] = useState(false);
+  const [missionOptions, setMissionOptions] = useState<MissionOption[]>([]);
+  const [isFetchingOptions, setIsFetchingOptions] = useState(false);
+
+  // Guard against duplicate initialization
+  const isInitializing = React.useRef(false);
+
+  const startMissionDiscovery = async () => {
+    // 1. Show loading state for options
+    setIsFetchingOptions(true);
+    setLoadingStep('Scanning for Mission Targets...');
+
+    // 2. Fetch AI options
+    const options = await generateMissionOptions();
+    setMissionOptions(options);
+
+    // 3. Keep loading false (so main game loop doesn't restart yet), but show selector
+    setIsFetchingOptions(false);
+    setShowMissionSelector(true);
+  };
+
+  const initGame = async (specificTopic?: string) => {
+    // Prevent concurrent initialization
+    if (isInitializing.current) {
+      console.log('Init already in progress, skipping duplicate call');
+      return;
+    }
+
     try {
-      if (isManualRefresh) {
+      isInitializing.current = true;
+      setShowMissionSelector(false); // Close selector if open
+
+      if (specificTopic) {
+        // Manual Jump
         setIsHyperjumping(true);
       } else {
+        // Initial Load
         setLoading(true);
       }
 
       setError(null);
-      setLoadingStep('Searching Star Charts...');
+      setLoadingStep(specificTopic ? `Targeting Sector: ${specificTopic}...` : 'Searching Star Charts...');
 
-      // 1. Fetch metadata and URL from NASA
-      const nasaImg = await fetchSpaceImage();
+      // 1. Fetch metadata and URL from NASA (Using specific topic if provided)
+      const nasaImg = await fetchSpaceImage(specificTopic);
 
       setLoadingStep('Calculating Warp Trajectory...');
       // 2. Prepare for analysis
       const base64 = await imageToBase64(nasaImg.url);
+
+      // 2.5 AI Sentry Validation (Visual Content Filter)
+      // Skip validation for user-selected missions to improve load time
+      // (AI-generated topics are pre-vetted, only validate random selections)
+      if (!specificTopic) {
+        setLoadingStep('AI Sentry: Verifying Visuals...');
+        const isValid = await validateImageContent(base64);
+        if (!isValid) {
+          console.warn('Image rejected by Sentry. Retrying jump...');
+          setLoadingStep('Contamination Detected. Re-routing...');
+          // Reset the flag before retry
+          isInitializing.current = false;
+          // Recursive retry with a small delay to prevent rapid-fire API limits
+          setTimeout(() => initGame(specificTopic), 1500);
+          return;
+        }
+      }
 
       setLoadingStep('Gemini AI Mapping Sector...');
       // 3. AI analysis of the new image
       const analyzedPoints = await analyzeSpaceImage(base64, nasaImg.title, nasaImg.description);
 
       // 4. Update all state at once
+      // 4. Update all state at once - ONLY after all validations pass
       setImage(nasaImg);
       setPoints(analyzedPoints);
       setMissionId(prev => prev + 1);
 
       setLoading(false);
+      isInitializing.current = false;
       // Brief delay to ensure the new component has mounted behind the flash
       setTimeout(() => setIsHyperjumping(false), 1200);
     } catch (err) {
       console.error(err);
       setError('Signal Lost. Re-establishing link...');
-      setTimeout(() => initGame(isManualRefresh), 3000);
+      isInitializing.current = false;
+      setTimeout(() => initGame(specificTopic), 3000);
     }
   };
 
   useEffect(() => {
+    let isMounted = true;
     initGame();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Initial Boot Loader
-  if (loading && !isHyperjumping) {
+  if (loading && !isHyperjumping && !showMissionSelector) {
     return (
       <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center space-y-8 z-[1000]">
         <div className="relative">
@@ -100,11 +158,20 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Mission Selector Overlay */}
+      {showMissionSelector && (
+        <MissionSelector
+          options={missionOptions}
+          onSelect={(topic) => initGame(topic)}
+          isLoading={isHyperjumping}
+        />
+      )}
+
       {/* 
         CRITICAL: Using image.url as a KEY ensures the GameWorld 
         remounts from scratch whenever a new mission starts.
       */}
-      {image && (
+      {image && !showMissionSelector && (
         <GameWorld
           key={`${image.url}-${missionId}`}
           image={image}
@@ -116,12 +183,14 @@ const App: React.FC = () => {
       <div className="absolute bottom-8 right-8 flex flex-col items-end gap-2 z-[60]">
         <div className="text-[9px] text-cyan-500/50 font-mono uppercase tracking-[0.2em]">Navigation Command</div>
         <button
-          onClick={() => initGame(true)}
-          disabled={isHyperjumping}
+          onClick={startMissionDiscovery}
+          disabled={isHyperjumping || isFetchingOptions || showMissionSelector}
           className={`group relative overflow-hidden px-8 py-3 bg-slate-950 border border-cyan-500/30 text-cyan-400 transition-all duration-500 hover:border-cyan-400 hover:text-white hover:shadow-[0_0_20px_rgba(34,211,238,0.3)] rounded-sm disabled:opacity-50`}
         >
           <div className="absolute inset-0 bg-cyan-500/5 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
-          <span className="relative z-10 font-black text-[11px] uppercase tracking-[0.25em]">Next Mission Area</span>
+          <span className="relative z-10 font-black text-[11px] uppercase tracking-[0.25em]">
+            {isFetchingOptions ? 'Scanning Sectors...' : 'Next Mission Area'}
+          </span>
         </button>
       </div>
     </div>

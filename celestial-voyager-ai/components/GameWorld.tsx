@@ -11,7 +11,8 @@ interface Props {
   points: POI[];
 }
 
-const INTERACTION_RADIUS = 6; // percentage
+const INTERACTION_RADIUS = 6; // percentage to enter/trigger
+const EXIT_RADIUS = 12; // percentage to exit/close (hysteresis)
 
 const GameWorld: React.FC<Props> = ({ image, points }) => {
   const [gameState, setGameState] = useState<GameState>({
@@ -20,6 +21,11 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
     velocity: { x: 0, y: 0 },
     activePOI: null
   });
+
+  // Filter points to ensure only safe/visible ones are used throughout the component
+  const validPoints = React.useMemo(() =>
+    points.filter(poi => poi.x >= 5 && poi.x <= 95 && poi.y >= 5 && poi.y <= 95),
+    [points]);
 
   const [rotation, setRotation] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -32,6 +38,34 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
   const [sectorCompleted, setSectorCompleted] = useState(false);
   const [quizScore, setQuizScore] = useState<{ score: number, total: number } | null>(null);
   const [quizCompleted, setQuizCompleted] = useState(false);
+
+  // Responsive Alignment States
+  const [imageSize, setImageSize] = useState({ width: 1920, height: 1080 }); // Default fallback
+  const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+
+  // Load image dimensions to calculate aspect ratio
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.src = image.url;
+  }, [image.url]);
+
+  // Handle Window Resize
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+
+      // Keep WASD in viewport
+      setWasdPos(prev => ({
+        x: Math.min(prev.x, window.innerWidth - 100),
+        y: Math.min(prev.y, window.innerHeight - 100)
+      }));
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const updatePosition = useCallback(() => {
     setGameState(prev => {
@@ -53,28 +87,43 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
       let nextX = prev.posX + vx;
       let nextY = prev.posY + vy;
 
-      // Boundaries with bounce/stop
-      if (nextX < 0) { nextX = 0; vx = 0; }
-      if (nextX > 100) { nextX = 100; vx = 0; }
-      if (nextY < 0) { nextY = 0; vy = 0; }
-      if (nextY > 100) { nextY = 100; vy = 0; }
+      // Boundaries with hard-stop (Safe Zone for visibility)
+      // With a 120% parent and 0.2 factor, 10-90 is the theoretical limit. 
+      // We use 12-88 for a comfort buffer.
+      const buffer = 12;
+      if (nextX < buffer) { nextX = buffer; vx = 0; }
+      if (nextX > 100 - buffer) { nextX = 100 - buffer; vx = 0; }
+      if (nextY < buffer) { nextY = buffer; vy = 0; }
+      if (nextY > 100 - buffer) { nextY = 100 - buffer; vy = 0; }
 
-      // Check POI collisions and mark as explored
-      let foundPOI: POI | null = null;
-      for (const poi of points) {
-        const dist = Math.sqrt(Math.pow(poi.x - nextX, 2) + Math.pow(poi.y - nextY, 2));
-        if (dist < INTERACTION_RADIUS) {
-          foundPOI = poi;
-          // Mark POI as explored
-          setExploredPOIs(prevExplored => {
-            if (!prevExplored.has(poi.id)) {
-              const newExplored = new Set(prevExplored);
-              newExplored.add(poi.id);
-              return newExplored;
-            }
-            return prevExplored;
-          });
-          break;
+      // Check POI collisions with hysteresis (sticky tooltips)
+      let activePOI = prev.activePOI;
+
+      // If we have an active POI, check if we've moved far enough away to close it
+      if (activePOI) {
+        const dist = Math.sqrt(Math.pow(activePOI.x - nextX, 2) + Math.pow(activePOI.y - nextY, 2));
+        if (dist > EXIT_RADIUS) {
+          activePOI = null;
+        }
+      }
+
+      // If no POI is active (or we just closed one), check for new collisions
+      if (!activePOI) {
+        for (const poi of validPoints) {
+          const dist = Math.sqrt(Math.pow(poi.x - nextX, 2) + Math.pow(poi.y - nextY, 2));
+          if (dist < INTERACTION_RADIUS) {
+            activePOI = poi;
+            // Mark POI as explored
+            setExploredPOIs(prevExplored => {
+              if (!prevExplored.has(poi.id)) {
+                const newExplored = new Set(prevExplored);
+                newExplored.add(poi.id);
+                return newExplored;
+              }
+              return prevExplored;
+            });
+            break;
+          }
         }
       }
 
@@ -88,10 +137,10 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
         posX: nextX,
         posY: nextY,
         velocity: { x: vx, y: vy },
-        activePOI: foundPOI
+        activePOI: activePOI
       };
     });
-  }, [points]);
+  }, [validPoints]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => keysPressed.current.add(e.key);
@@ -135,10 +184,10 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
 
   // Check for sector completion
   useEffect(() => {
-    if (exploredPOIs.size === points.length && points.length > 0 && !sectorCompleted) {
+    if (exploredPOIs.size === validPoints.length && validPoints.length > 0 && !sectorCompleted) {
       setSectorCompleted(true);
       // Trigger quiz generation
-      const exploredPOIData = points.filter(p => exploredPOIs.has(p.id));
+      const exploredPOIData = validPoints.filter(p => exploredPOIs.has(p.id));
       generateQuiz(exploredPOIData).then(questions => {
         setQuizQuestions(questions);
         // Small delay before showing quiz for better UX
@@ -198,55 +247,140 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
       {/* Skybox / State-Aware Background */}
       {/* Parallax Container: Moves opposite to player position to create depth */}
       <div
-        className="absolute inset-[-10%] transition-transform duration-75 ease-linear will-change-transform"
+        className="absolute transition-transform duration-75 ease-linear will-change-transform flex items-center justify-center overflow-hidden"
         style={{
-          transform: `translate(${(50 - gameState.posX) * 0.15}%, ${(50 - gameState.posY) * 0.15}%)`
+          // Parallax inset logic - we make it slightly larger than 100% to allow wiggle
+          // But we align it to the center
+          width: '100%',
+          height: '100%',
+          left: '0%',
+          top: '0%',
+          // Slightly reduced parallax movement to fit safely within bounds
+          transform: `translate(${(50 - gameState.posX) * 0.05}%, ${(50 - gameState.posY) * 0.05}%)`
         }}
       >
-        {/* Image Layer: Handles Focus (POI) */}
+        {/* Aspect-Ratio-Aware Container: Automatically matches image scaling */}
         <div
-          className={`w-full h-full bg-cover bg-center transition-all duration-700 ease-out ${gameState.activePOI ? 'blur-[2px]' : 'blur-0'}`}
+          className="relative shadow-2xl flex-none transition-transform duration-700 ease-out"
           style={{
-            backgroundImage: `url(${image.url})`,
-            filter: gameState.activePOI ? 'brightness(1.1) contrast(1.2)' : 'brightness(0.7) contrast(1.0)',
-            // Subtle zoom when POI is active
+            // Contain Logic: Ensure image fits fully on screen without overflow? 
+            // USER REQUEST: "image extending beyond screen". 
+            // This usually implies they see scrollbars or the ship goes "off canvas".
+            // We switch to "Contain" mode: The image will be fully visible, letterboxed if needed, but NEVER clipped.
+            maxWidth: '100%',
+            maxHeight: '100%',
+            aspectRatio: `${imageSize.width} / ${imageSize.height}`,
+
+            width: '100%',     // Attempt to fill width
+            height: 'auto',    // But respect aspect
+            margin: 'auto',    // Center it
+
+            // Apply Zoom at the Container Level so BG and Markers scale together
             transform: `scale(${1 + (gameState.activePOI ? 0.05 : 0)})`
           }}
-        />
+        >
+          {/* Image Layer */}
+          <div
+            className="w-full h-full bg-cover bg-center transition-all duration-700 ease-out"
+            style={{
+              backgroundImage: `url(${image.url})`,
+              filter: gameState.activePOI ? 'brightness(1.1) contrast(1.15)' : 'brightness(1) contrast(1)',
+              // Scale removed from here to prevent drift
+            }}
+          />
 
-        {/* POI Markers - Now part of parallax layer */}
-        {points.map(poi => {
-          const isNearby = gameState.activePOI?.id === poi.id;
-          return (
-            <div
-              key={poi.id}
-              className="absolute flex items-center justify-center transition-all duration-500"
-              style={{
-                left: `${poi.x}%`,
-                top: `${poi.y}%`,
-                transform: `translate(-50%, -50%) ${isNearby ? 'scale(1.2)' : 'scale(1)'}`,
-                opacity: isNearby ? 1 : 0.5
-              }}
-            >
-              <div className={`w-8 h-8 rounded-full border-2 transition-all duration-500 ${isNearby
-                ? 'border-cyan-400 bg-cyan-500/20 shadow-[0_0_15px_cyan]'
-                : exploredPOIs.has(poi.id)
-                  ? 'border-slate-500 bg-slate-500/10'
-                  : 'border-green-400 bg-transparent shadow-[0_0_10px_lime] poi-pulse'
-                } flex items-center justify-center`}>
-                {isNearby && <div className="w-1 h-1 bg-cyan-400 rounded-full animate-ping" />}
-              </div>
-              <div className={`absolute -bottom-10 whitespace-nowrap text-[10px] uppercase tracking-tighter font-black transition-all px-3 py-1 rounded-full border backdrop-blur-sm ${isNearby
-                ? 'text-cyan-300 translate-y-[-4px] drop-shadow-[0_0_5px_cyan] bg-slate-950/80 border-cyan-500/30'
-                : exploredPOIs.has(poi.id)
-                  ? 'text-slate-200 bg-slate-900/80 border-slate-500/30 shadow-md'
-                  : 'hidden'
-                }`}>
-                {isNearby ? 'SIGNAL DETECTED' : (exploredPOIs.has(poi.id) ? poi.name : '')}
-              </div>
-            </div>
-          );
-        })}
+          {/* POI Markers and Tooltips - Now perfectly aligned in image space */}
+          {validPoints.map(poi => {
+            const isNearby = gameState.activePOI?.id === poi.id;
+            // Tooltip Positioning based on image coordinates
+            // Flipped at 50% ensures it always points towards the center of the screen
+            const isFlippedY = poi.y > 50;
+            const isFlippedX = poi.x > 50;
+
+            return (
+              <React.Fragment key={poi.id}>
+                <div
+                  className="absolute flex items-center justify-center transition-all duration-500 z-40"
+                  style={{
+                    left: `${poi.x}%`,
+                    top: `${poi.y}%`,
+                    transform: `translate(-50%, -50%) ${isNearby ? 'scale(1.2)' : 'scale(1)'}`,
+                    opacity: isNearby ? 1 : 0.5
+                  }}
+                >
+                  <div className={`w-10 h-10 rounded-full border-[3px] transition-all duration-500 ${isNearby
+                    ? 'border-cyan-300 bg-cyan-400/30 shadow-[0_0_30px_#22d3ee,0_0_60px_#22d3ee]'
+                    : exploredPOIs.has(poi.id)
+                      ? 'border-slate-400 bg-slate-500/20 shadow-[0_0_10px_rgba(148,163,184,0.5)]'
+                      : 'border-cyan-400 bg-cyan-400/10 shadow-[0_0_20px_#22d3ee,0_0_40px_rgba(34,211,238,0.4)] poi-pulse'
+                    } flex items-center justify-center ring-4 ring-cyan-500/10`}>
+                    <div className={`w-2 h-2 rounded-full ${isNearby ? 'bg-white shadow-[0_0_10px_white]' : 'bg-cyan-400/50'} transition-all`} />
+                    {isNearby && <div className="absolute inset-0 w-full h-full rounded-full border border-white/50 animate-ping" />}
+                  </div>
+                  <div className={`absolute -bottom-10 whitespace-nowrap text-[10px] uppercase tracking-tighter font-black transition-all px-3 py-1 rounded-full border backdrop-blur-sm ${isNearby
+                    ? 'text-cyan-300 translate-y-[-4px] drop-shadow-[0_0_5px_cyan] bg-slate-950/80 border-cyan-500/30'
+                    : exploredPOIs.has(poi.id)
+                      ? 'text-slate-200 bg-slate-900/80 border-slate-500/30 shadow-md'
+                      : 'hidden'
+                    }`}>
+                    {isNearby ? 'SIGNAL DETECTED' : (exploredPOIs.has(poi.id) ? poi.name : '')}
+                  </div>
+                </div>
+
+                {/* Inline Tooltip: Anchored to POI coordinate */}
+                {isNearby && (
+                  <div
+                    className="absolute z-[100] p-5 bg-slate-950/90 border-l-4 border-cyan-500 backdrop-blur-2xl rounded shadow-2xl w-80 overflow-y-auto scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-transparent transition-all duration-500 animate-in fade-in zoom-in-95"
+                    style={{
+                      left: `${poi.x}%`,
+                      top: `${poi.y}%`,
+                      // Smart Positioning: Offset from center of POI
+                      // Constrain max-height based on which side it's on
+                      transform: `translate(${isFlippedX ? 'calc(-100% - 35px)' : '35px'}, ${isFlippedY ? 'calc(-100% + 20px)' : 'calc(20px)'})`,
+                      maxHeight: isFlippedY ? `${poi.y}%` : `${100 - poi.y}%`,
+                      maxWidth: isFlippedX ? `${poi.x}vw` : `${100 - poi.x}vw`
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex flex-col gap-1">
+                        <h3 className="text-cyan-50 text-2xl font-black tracking-tight uppercase drop-shadow-[0_0_10px_rgba(8,145,178,0.8)]">
+                          {poi.name}
+                        </h3>
+                      </div>
+                      <div className="text-[9px] font-mono text-cyan-400 animate-pulse border border-cyan-800 px-1 self-start mt-1">ACTIVE SCAN</div>
+                    </div>
+                    <p className="text-slate-300 text-sm leading-relaxed font-normal antialiased whitespace-pre-wrap">
+                      {poi.description}
+                    </p>
+
+                    {poi.thoughtSignature && (
+                      <div className="mt-3 p-2 rounded bg-cyan-950/40 border border-cyan-500/20">
+                        <div className="text-[9px] text-cyan-500 uppercase font-black tracking-widest mb-1 flex items-center gap-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse"></span>
+                          AI Triangulation Logic
+                        </div>
+                        <p className="text-[10px] text-cyan-200/80 font-mono leading-relaxed italic">
+                          "{poi.thoughtSignature}"
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          })}
+
+          {/* Character - Now in the same image-space as POIs */}
+          <SpaceCharacter
+            x={gameState.posX}
+            y={gameState.posY}
+            rotation={rotation}
+            isThrusting={keysPressed.current.size > 0}
+            isBraking={keysPressed.current.size === 0 && (Math.abs(gameState.velocity.x) > 0.01 || Math.abs(gameState.velocity.y) > 0.01)}
+            turnDirection={0}
+            key={String(keysPressed.current.size > 0)}
+          />
+        </div>
       </div>
 
       {/* Aesthetic HUD Scanlines */}
@@ -255,66 +389,6 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
         style={{ background: 'linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 255, 0, 0.06))', backgroundSize: '100% 4px, 3px 100%' }} />
 
       {/* Grid Overlay - Also State Aware (Parallax) */}
-      <div className="absolute inset-[-10%] opacity-10 pointer-events-none transition-transform duration-75 ease-linear will-change-transform"
-        style={{
-          backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)',
-          backgroundSize: '70px 70px',
-          transform: `translate(${(50 - gameState.posX) * 0.05}%, ${(50 - gameState.posY) * 0.05}%)` // Lower parallax factor for "distant" grid? Or higher for "close"? standard grid is usually "floor". leaving as slight shift.
-        }} />
-
-      {/* Character */}
-      <SpaceCharacter
-        x={gameState.posX}
-        y={gameState.posY}
-        rotation={rotation}
-        isThrusting={keysPressed.current.size > 0}
-        isBraking={keysPressed.current.size === 0 && (Math.abs(gameState.velocity.x) > 0.01 || Math.abs(gameState.velocity.y) > 0.01)}
-        turnDirection={0}
-        // Force key reset on thrust initiation for ignition pulse
-        key={String(keysPressed.current.size > 0)}
-      />
-
-      {/* UI: Interactive Tooltip */}
-      {gameState.activePOI && (
-        <div
-          className="absolute z-[100] p-5 bg-slate-950/90 border-l-4 border-cyan-500 backdrop-blur-2xl rounded shadow-2xl max-w-sm overflow-y-auto scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-transparent transition-all duration-500 animate-in fade-in zoom-in-95"
-          style={{
-            left: `${gameState.posX}%`,
-            top: `${gameState.posY}%`,
-            maxHeight: `${tooltipMaxHeight}vh`, // Use viewport height units
-            // Smart Positioning with robust boundary checks
-            // Horizontal: Flip to left if past 60% width
-            // Vertical: Flip to top (-100%) if past 60% height to prevent bottom overflow
-            // Standard: slightly offset to not cover the POI itself
-            transform: `translate(${gameState.posX > 60 ? 'calc(-100% - 20px)' : '20px'}, ${isTooltipFlipped ? '-100%' : '0%'})`
-          }}
-        >    <div className="flex items-center justify-between mb-3">
-            <div className="flex flex-col gap-1">
-              <h3 className="text-cyan-50 text-2xl font-black tracking-tight uppercase drop-shadow-[0_0_10px_rgba(8,145,178,0.8)]">
-                {gameState.activePOI.name}
-              </h3>
-            </div>
-            <div className="text-[9px] font-mono text-cyan-400 animate-pulse border border-cyan-800 px-1 self-start mt-1">ACTIVE SCAN</div>
-          </div>
-          <p className="text-slate-300 text-sm leading-relaxed font-normal antialiased whitespace-pre-wrap">
-            {gameState.activePOI.description}
-          </p>
-
-          {gameState.activePOI.thoughtSignature && (
-            <div className="mt-3 p-2 rounded bg-cyan-950/40 border border-cyan-500/20">
-              <div className="text-[9px] text-cyan-500 uppercase font-black tracking-widest mb-1 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse"></span>
-                AI Triangulation Logic
-              </div>
-              <p className="text-[10px] text-cyan-200/80 font-mono leading-relaxed italic">
-                "{gameState.activePOI.thoughtSignature}"
-              </p>
-            </div>
-          )}
-
-          {/* Analysis Depth Removed */}
-        </div>
-      )}
 
       {/* Top Left: Telemetry (Title Truncation Fixed, Fixed Width) */}
       {showHUD && (
@@ -461,7 +535,7 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
           Sector Progress {sectorCompleted && <span className="text-green-400">✓ COMPLETE</span>}
         </div>
         <div className="flex gap-1.5 mt-1 justify-end">
-          {points.map((p, i) => {
+          {validPoints.map((p, i) => {
             const isExplored = exploredPOIs.has(p.id);
             const isActive = gameState.activePOI?.id === p.id;
             return (
@@ -488,23 +562,19 @@ const GameWorld: React.FC<Props> = ({ image, points }) => {
             setQuizScore({ score, total });
             setQuizCompleted(true);
           }}
-          poiCount={points.length}
+          poiCount={validPoints.length}
         />
       )}
 
       {/* Discovery Journal Modal */}
       {showJournal && (
         <DiscoveryJournal
-          exploredPOIs={points.filter(p => exploredPOIs.has(p.id))}
+          exploredPOIs={validPoints.filter(p => exploredPOIs.has(p.id))}
           onClose={() => setShowJournal(false)}
         />
       )}
 
-      {/* Instruction Overlay (Fade out) */}
-      <div className="absolute bottom-8 right-32 text-right font-mono text-[10px] text-slate-400 animate-pulse">
-        [ARROW KEYS] TO NAVIGATE<br />
-        APPROACH ANOMALIES TO SCAN
-      </div>
+      {/* Instruction Overlay moved to WASD area */}
     </div>
   );
 };
