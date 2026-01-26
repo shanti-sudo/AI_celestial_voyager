@@ -5,8 +5,15 @@ export interface POI {
   description: string;
   x: number; // Percentage 0-100
   y: number; // Percentage 0-100
+  hard_anchor?: {
+    pixelX: number;
+    pixelY: number;
+    originalImageWidth: number;
+    originalImageHeight: number;
+  };
   type: 'star' | 'nebula' | 'galaxy' | 'planet' | 'other';
   thoughtSignature?: string; // AI reasoning/triangulation data
+  registrationStatus?: string; // Tracks 'SYNCED' or 'ADJUSTED' after Image Registration
   explored?: boolean; // Track if POI has been visited
 }
 

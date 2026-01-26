@@ -3,7 +3,7 @@ import { MissionOption } from '../services/geminiService';
 
 interface Props {
     options: MissionOption[];
-    onSelect: (topic: string) => void;
+    onSelect: (mission: MissionOption) => void;
     isLoading?: boolean;
     prefetchedState?: Record<string, 'loading' | 'ready' | 'error'>;
 }
@@ -22,7 +22,7 @@ const MissionSelector: React.FC<Props> = ({ options, onSelect, isLoading, prefet
                 {options.map((option, idx) => (
                     <button
                         key={option.id}
-                        onClick={() => !isLoading && onSelect(option.topic)}
+                        onClick={() => !isLoading && onSelect(option)}
                         disabled={isLoading}
                         className={`group relative overflow-hidden bg-black/40 border-2 border-slate-800 hover:border-cyan-500/50 rounded-lg p-6 text-left transition-all duration-300 hover:shadow-[0_0_30px_rgba(34,211,238,0.15)] hover:-translate-y-1 ${isLoading ? 'opacity-50 cursor-not-allowed animate-pulse' : 'cursor-pointer'
                             }`}
@@ -39,7 +39,7 @@ const MissionSelector: React.FC<Props> = ({ options, onSelect, isLoading, prefet
                                     }`}>
                                     {option.type.replace('_', ' ')}
                                 </span>
-                                {prefetchedState?.[option.topic] === 'ready' && (
+                                {prefetchedState?.[option.id] === 'ready' && (
                                     <span className="text-[9px] font-black text-cyan-400 bg-cyan-950/40 border border-cyan-500/40 px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1">
                                         <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
                                         COORDINATES LOCKED

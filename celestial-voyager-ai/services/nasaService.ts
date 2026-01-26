@@ -11,25 +11,30 @@ export const fetchSpaceImage = async (customTopic?: string, strictMode: boolean 
   // Added Earth-specific terms for "latest happening" context
   const keywords = [
     // Deep Space
+    // Pure Deep Space
     'nebula', 'spiral galaxy', 'elliptical galaxy', 'supernova remnant', 'globular cluster',
     'open star cluster', 'planetary nebula', 'molecular cloud', 'dark nebula',
-    'james webb deep field', 'hubble ultra deep field', 'pillars of creation',
-    'carina nebula', 'orion nebula', 'tarantula nebula', 'whirlpool galaxy', 'sombrero galaxy',
-    // Earth / Recent Events
-    'earth from space', 'aurora borealis', 'hurricane view from space', 'earth limb',
-    'earth night lights', 'blue marble', 'atmosphere'
+    'pillars of creation', 'carina nebula', 'orion nebula', 'tarantula nebula', 'whirlpool galaxy', 'sombrero galaxy',
+    'messier 81', 'crab nebula', 'eagle nebula', 'lagoon nebula',
+    // Earth Limb/Atmosphere (Strictly uninhabited)
+    'earth limb', 'aurora borealis', 'airglow', 'cloud deck', 'atmosphere from orbit'
   ];
   const keyword = customTopic || keywords[Math.floor(Math.random() * keywords.length)];
   const NASA_API_KEY = 'DEMO_KEY';
 
-  // Banned terms preventing "people", "machines", or "launches"
+  // Stricter Banned terms preventing "people", "machines", or "launches"
   const BANNED_TERMS = [
+    // Humans & People
     'person', 'people', 'human', 'engineer', 'scientist', 'astronaut', 'crowd', 'face', 'man', 'woman',
     'technician', 'employee', 'portrait', 'ceremony', 'spacewalk', 'crew', 'suit', 'helmet',
-    'meeting', 'conference', 'laboratory', 'building', 'facility', 'center',
-    'diagram', 'chart', 'graph', 'plot', 'artist concept', 'illustration', 'artist\'s impression', 'animation',
-    'airplane', 'aircraft', 'rocket', 'vehicle',
-    'hand', 'hands', 'leg', 'legs', 'finger', 'fingers', 'selfie', 'body'
+    'selfie', 'body', 'hand', 'hands', 'leg', 'legs', 'finger', 'fingers', 'silhouette',
+    // Machines & Structures
+    'machine', 'machinery', 'robot', 'robotic', 'satellite', 'spacecraft', 'probe', 'rover', 'lander',
+    'station', 'iss', 'telescope', 'shuttle', 'rocket', 'launch', 'vehicle', 'airplane', 'aircraft',
+    'instrument', 'antenna', 'computer', 'console', 'laboratory', 'building', 'facility', 'center',
+    'meeting', 'conference', 'diagram', 'chart', 'graph', 'plot', 'blueprint',
+    // Art Concepts
+    'artist concept', 'illustration', 'artist\'s impression', 'animation', 'drawing', 'sketch'
   ];
 
   const validateImageItem = (item: any): boolean => {
@@ -86,12 +91,8 @@ export const fetchSpaceImage = async (customTopic?: string, strictMode: boolean 
         throw new Error(`Strict Mode: No valid images found for '${keyword}' after filtering.`);
       }
 
-      console.warn(`All images for '${keyword}' contained banned terms. Trying safer fallback keywords...`);
-      // Instead of throwing, try a safer fallback keyword that's less likely to have banned content
-      const safeFallbacks = ['nebula', 'galaxy cluster', 'deep space', 'star field', 'cosmic dust'];
+      const safeFallbacks = ['nebula', 'galaxy cluster', 'deep space', 'star field', 'cosmic dust', 'molecular cloud'];
       const fallbackKeyword = safeFallbacks[Math.floor(Math.random() * safeFallbacks.length)];
-
-      // Retry with fallback keyword (without restrictive year filter)
       const fallbackUrl = `https://images-api.nasa.gov/search?q=${encodeURIComponent(fallbackKeyword)}&media_type=image&page=1`;
       const fallbackResponse = await fetch(fallbackUrl);
 

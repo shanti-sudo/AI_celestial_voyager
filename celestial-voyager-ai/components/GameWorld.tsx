@@ -63,9 +63,7 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
 
       osc.start();
       osc.stop(ctx.currentTime + duration);
-    } catch (e) {
-      console.warn('Audio feedback failed:', e);
-    }
+    } catch (e) { }
   }, []);
 
   // Load image dimensions to calculate aspect ratio
@@ -112,9 +110,6 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
       let nextX = prev.posX + vx;
       let nextY = prev.posY + vy;
 
-      // Boundaries with hard-stop (Safe Zone for visibility)
-      // With a 120% parent and 0.2 factor, 10-90 is the theoretical limit. 
-      // We use 12-88 for a comfort buffer.
       const buffer = 12;
       if (nextX < buffer) { nextX = buffer; vx = 0; }
       if (nextX > 100 - buffer) { nextX = 100 - buffer; vx = 0; }
@@ -126,7 +121,10 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
 
       // If we have an active POI, check if we've moved far enough away to close it
       if (activePOI) {
-        const dist = Math.sqrt(Math.pow(activePOI.x - nextX, 2) + Math.pow(activePOI.y - nextY, 2));
+        // Nano Banana Pro: Sub-pixel precision check
+        const poiX = activePOI.hard_anchor ? (activePOI.hard_anchor.pixelX / activePOI.hard_anchor.originalImageWidth) * 100 : activePOI.x;
+        const poiY = activePOI.hard_anchor ? (activePOI.hard_anchor.pixelY / activePOI.hard_anchor.originalImageHeight) * 100 : activePOI.y;
+        const dist = Math.sqrt(Math.pow(poiX - nextX, 2) + Math.pow(poiY - nextY, 2));
         if (dist > EXIT_RADIUS) {
           activePOI = null;
         }
@@ -135,7 +133,10 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
       // If no POI is active (or we just closed one), check for new collisions
       if (!activePOI) {
         for (const poi of validPoints) {
-          const dist = Math.sqrt(Math.pow(poi.x - nextX, 2) + Math.pow(poi.y - nextY, 2));
+          // Snap collision to absolute pixel-derived centroids
+          const poiX = poi.hard_anchor ? (poi.hard_anchor.pixelX / poi.hard_anchor.originalImageWidth) * 100 : poi.x;
+          const poiY = poi.hard_anchor ? (poi.hard_anchor.pixelY / poi.hard_anchor.originalImageHeight) * 100 : poi.y;
+          const dist = Math.sqrt(Math.pow(poiX - nextX, 2) + Math.pow(poiY - nextY, 2));
           if (dist < INTERACTION_RADIUS) {
             activePOI = poi;
             // Mark POI as explored
@@ -152,7 +153,6 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
         }
       }
 
-      // Calculate rotation based on velocity
       if (Math.abs(vx) > 0.01 || Math.abs(vy) > 0.01) {
         setRotation(Math.atan2(vy, vx) * 180 / Math.PI + 90);
       }
@@ -312,26 +312,38 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
               backgroundSize: '100% 100%',
               backgroundPosition: '0 0',
               filter: gameState.activePOI ? 'brightness(1.1) contrast(1.15)' : 'brightness(1) contrast(1)',
-              // Scale removed from here to prevent drift
+              imageRendering: 'pixelated', // Protocol: Pixel-Perfect Grounding
+              transformOrigin: 'top left',
             }}
           />
 
           {/* POI Markers and Tooltips - Now perfectly aligned in image space */}
           {validPoints.map(poi => {
             const isNearby = gameState.activePOI?.id === poi.id;
-            // Tooltip Positioning based on image coordinates
-            // Flipped at 50% ensures it always points towards the center of the screen
-            const isFlippedY = poi.y > 50;
-            const isFlippedX = poi.x > 50;
+
+            // BYPASS PROJECT COORDINATE SYSTEM:
+            // Using Raw Pixel Space (x, y) relative to top-left corner (0,0).
+            // This ensures zero spatial projection or scaling offsets from the source buffer.
+            const displayX = poi.hard_anchor
+              ? (poi.hard_anchor.pixelX / poi.hard_anchor.originalImageWidth) * 100
+              : poi.x;
+            const displayY = poi.hard_anchor
+              ? (poi.hard_anchor.pixelY / poi.hard_anchor.originalImageHeight) * 100
+              : poi.y;
+
+            // Tooltip Positioning based on Pixel Space coordinates
+            const isFlippedY = displayY > 50;
+            const isFlippedX = displayX > 50;
 
             return (
               <React.Fragment key={poi.id}>
                 <div
-                  className="absolute flex items-center justify-center transition-all duration-500 z-40"
+                  className="absolute flex items-center justify-center transition-all duration-500 z-40 will-change-transform"
                   style={{
-                    left: `${poi.x}%`,
-                    top: `${poi.y}%`,
-                    transform: `translate(-50%, -50%) ${isNearby ? 'scale(1.2)' : 'scale(1)'}`,
+                    left: `${displayX}%`,
+                    top: `${displayY}%`,
+                    // Using translate3d for sub-pixel hardware rendering acceleration
+                    transform: `translate3d(-50%, -50%, 0) ${isNearby ? 'scale(1.2)' : 'scale(1)'}`,
                     opacity: isNearby ? 1 : 0.5
                   }}
                 >
@@ -359,13 +371,13 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
                   <div
                     className="absolute z-[100] p-5 bg-slate-950/90 border-l-4 border-cyan-500 backdrop-blur-2xl rounded shadow-2xl w-80 overflow-y-auto scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-transparent transition-all duration-500 animate-in fade-in zoom-in-95"
                     style={{
-                      left: `${poi.x}%`,
-                      top: `${poi.y}%`,
+                      left: `${displayX}%`,
+                      top: `${displayY}%`,
                       // Smart Positioning: Offset from center of POI
                       // Constrain max-height based on which side it's on to prevent screen overflow
                       transform: `translate(${isFlippedX ? 'calc(-100% - 35px)' : '35px'}, ${isFlippedY ? 'calc(-100% + 20px)' : 'calc(20px)'})`,
-                      maxHeight: isFlippedY ? `calc(${poi.y}% - 5%)` : `calc(95% - ${poi.y}%)`,
-                      maxWidth: isFlippedX ? `${poi.x}vw` : `${100 - poi.x}vw`
+                      maxHeight: isFlippedY ? `calc(${displayY}% - 5%)` : `calc(95% - ${displayY}%)`,
+                      maxWidth: isFlippedX ? `${displayX}vw` : `${100 - displayX}vw`
                     }}
                   >
                     <div className="flex items-center justify-between mb-3">
@@ -422,6 +434,13 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
                         <p className="text-[10px] text-cyan-200/80 font-mono leading-relaxed italic">
                           "{poi.thoughtSignature}"
                         </p>
+                        {poi.registrationStatus && (
+                          <div className={`mt-1.5 text-[8px] font-black tracking-widest px-1.5 py-0.5 rounded border inline-block ${poi.registrationStatus === 'ADJUSTED'
+                            ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                            : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'}`}>
+                            {poi.registrationStatus === 'ADJUSTED' ? '⚠️ REGISTRATION ADJUSTED' : '✓ REGISTRATION SYNCED'}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -466,6 +485,8 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
               {image.title}
             </div>
           </div>
+
+
 
           {/* Quiz Status - Highlighted */}
           <div

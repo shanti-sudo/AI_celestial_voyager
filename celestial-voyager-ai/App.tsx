@@ -9,6 +9,7 @@ import { NASAImage, POI } from './types';
 const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadingStep, setLoadingStep] = useState('Initializing Deep Space Link...');
+  const [loadingProgress, setLoadingProgress] = useState(10);
   const [isHyperjumping, setIsHyperjumping] = useState(false);
   const [image, setImage] = useState<NASAImage | null>(null);
   const [points, setPoints] = useState<POI[]>([]);
@@ -31,10 +32,42 @@ const App: React.FC = () => {
   const prefetchedPoints = React.useRef<Record<string, POI[]>>({});
   const [prefetchedState, setPrefetchedState] = useState<Record<string, 'loading' | 'ready' | 'error'>>({});
 
+  // Flavor Text Logic
+  const FLAVOR_TEXTS = [
+    "Calibrating navigation sensors for optimal discovery.",
+    "Engaging sub-space frequencies for clear transmission.",
+    "Initializing starmap matrix for your next adventure.",
+    "Stabilizing ion drives for a smooth arrival.",
+    "Synchronizing shield harmonics for safe passage.",
+    "Charging photon banks for bright illumination.",
+    "Scanning sector quadrants for fascinating anomalies.",
+    "Aligning warp coils for rapid transit.",
+    "Buffering celestial data for high-resolution clarity.",
+    "Pre-heating fusion cores for efficient energy flow."
+  ];
+
+  const availableFlavorIndices = React.useRef<number[]>([]);
+
+  const getFlavorText = React.useCallback(() => {
+    if (availableFlavorIndices.current.length === 0) {
+      // Refill and shuffle
+      availableFlavorIndices.current = Array.from({ length: FLAVOR_TEXTS.length }, (_, i) => i);
+      // Simple shuffle
+      for (let i = availableFlavorIndices.current.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [availableFlavorIndices.current[i], availableFlavorIndices.current[j]] =
+          [availableFlavorIndices.current[j], availableFlavorIndices.current[i]];
+      }
+    }
+    const index = availableFlavorIndices.current.pop()!;
+    return FLAVOR_TEXTS[index];
+  }, []);
+
   const startMissionDiscovery = async () => {
     // 1. Show loading state for options
     setIsFetchingOptions(true);
-    setLoadingStep('Scanning for Mission Targets...');
+    setLoadingStep(getFlavorText());
+    setLoadingProgress(20);
 
     try {
       // 2. Fetch AI options
@@ -58,24 +91,22 @@ const App: React.FC = () => {
           validOptions.push(opt);
 
           // Populate cache since we already have the image!
-          prefetchedImages.current[opt.topic] = img;
-          setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'loading' })); // Already loaded image, but processing AI
+          prefetchedImages.current[opt.id] = img;
+          setPrefetchedState(prev => ({ ...prev, [opt.id]: 'loading' })); // Already loaded image, but processing AI
 
           // Continue background processing (Base64 + Gemini)
           // We don't await this part, we let it run in background to speed up UI
           (async () => {
             try {
               const b64 = await imageToBase64(img.analysisUrl);
-              prefetchedBase64.current[opt.topic] = b64;
+              prefetchedBase64.current[opt.id] = b64;
 
               const pts = await analyzeSpaceImage(b64, img.title, img.description);
-              prefetchedPoints.current[opt.topic] = pts;
-
-              setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'ready' }));
-              console.log(`Mission Pipeline Ready: ${opt.topic}`);
+              prefetchedPoints.current[opt.id] = pts;
+              setPrefetchedState(prev => ({ ...prev, [opt.id]: 'ready' }));
             } catch (e) {
               console.error(`Post-validation processing failed for ${opt.topic}`, e);
-              setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'error' }));
+              setPrefetchedState(prev => ({ ...prev, [opt.id]: 'error' }));
             }
           })();
 
@@ -99,11 +130,14 @@ const App: React.FC = () => {
     }
   };
 
-  const initGame = async (specificTopic?: string) => {
+  const initGame = async (mission?: MissionOption) => {
     // Prevent concurrent initialization
     if (isInitializing.current || !isMounted.current) {
       return;
     }
+
+    const specificTopic = mission?.topic;
+    const missionId_key = mission?.id;
 
     try {
       isInitializing.current = true;
@@ -117,25 +151,28 @@ const App: React.FC = () => {
 
       setError(null);
       setIsSectorComplete(false);
-      setLoadingStep(specificTopic ? `Targeting Sector: ${specificTopic}...` : 'Searching Star Charts...');
 
-      // 1. Fetch metadata and URL from NASA (Use cache if available)
+      if (specificTopic) {
+        setLoadingStep(`Targeting Sector: ${specificTopic}...`);
+      } else {
+        setLoadingStep(getFlavorText());
+      }
+      setLoadingProgress(15);
+
       let nasaImg: NASAImage;
-      if (specificTopic && prefetchedImages.current[specificTopic]) {
-        nasaImg = prefetchedImages.current[specificTopic];
-        console.log('Using pre-fetched image metadata');
+      if (missionId_key && prefetchedImages.current[missionId_key]) {
+        nasaImg = prefetchedImages.current[missionId_key];
       } else {
         nasaImg = await fetchSpaceImage(specificTopic);
       }
 
       if (!isMounted.current) return;
 
-      setLoadingStep('Calculating Warp Trajectory...');
-      // 2. Prepare for analysis (Use cache if available)
+      setLoadingStep(getFlavorText());
+      setLoadingProgress(45);
       let base64: string;
-      if (specificTopic && prefetchedBase64.current[specificTopic]) {
-        base64 = prefetchedBase64.current[specificTopic];
-        console.log('Using pre-fetched base64 data');
+      if (missionId_key && prefetchedBase64.current[missionId_key]) {
+        base64 = prefetchedBase64.current[missionId_key];
       } else {
         base64 = await imageToBase64(nasaImg.analysisUrl);
       }
@@ -143,8 +180,11 @@ const App: React.FC = () => {
       if (!isMounted.current) return;
 
       // 2.5 AI Sentry Validation
-      if (!specificTopic) {
-        setLoadingStep('AI Sentry: Verifying Visuals...');
+      // We validate ALL images that aren't already AI-verified (pre-fetched ones aren't strictly validated by Sentry yet)
+      const isAlreadyVerified = missionId_key && prefetchedPoints.current[missionId_key];
+      if (!isAlreadyVerified) {
+        setLoadingStep(getFlavorText());
+        setLoadingProgress(60);
         const isValid = await validateImageContent(base64);
         if (!isMounted.current) return;
 
@@ -152,28 +192,26 @@ const App: React.FC = () => {
           console.warn('Image rejected by Sentry. Retrying jump...');
           setLoadingStep('Contamination Detected. Re-routing...');
           isInitializing.current = false;
-          retryTimeoutRef.current = window.setTimeout(() => initGame(specificTopic), 1500);
+          // For missions, we might want to go back to selector, but for now retry works
+          retryTimeoutRef.current = window.setTimeout(() => initGame(mission), 1500);
           return;
         }
       }
 
-      setLoadingStep('Gemini AI Mapping Sector...');
-      console.time('Gemini_AI_Mapping');
-      // 3. AI analysis (Use cache if available)
+      setLoadingProgress(80);
       let analyzedPoints: POI[];
-      if (specificTopic && prefetchedPoints.current[specificTopic]) {
-        analyzedPoints = prefetchedPoints.current[specificTopic];
-        console.log('Using pre-fetched AI points');
+      if (missionId_key && prefetchedPoints.current[missionId_key]) {
+        analyzedPoints = prefetchedPoints.current[missionId_key];
       } else {
         analyzedPoints = await analyzeSpaceImage(base64, nasaImg.title, nasaImg.description);
       }
-      console.timeEnd('Gemini_AI_Mapping');
       if (!isMounted.current) return;
 
       // 4. Update all state at once
       setImage(nasaImg);
       setPoints(analyzedPoints);
       setMissionId(prev => prev + 1);
+      setLoadingProgress(100);
 
       setLoading(false);
       isInitializing.current = false;
@@ -184,7 +222,7 @@ const App: React.FC = () => {
 
       setError('Signal Lost. Re-establishing link...');
       isInitializing.current = false;
-      retryTimeoutRef.current = window.setTimeout(() => initGame(specificTopic), 3000);
+      retryTimeoutRef.current = window.setTimeout(() => initGame(mission), 3000);
     }
   };
 
@@ -222,7 +260,7 @@ const App: React.FC = () => {
         {error && <p className="text-red-500 font-mono text-[10px] bg-red-500/10 px-3 py-1 rounded border border-red-500/20">{error}</p>}
 
         <div className="max-w-xs w-full h-0.5 bg-slate-900 rounded-full overflow-hidden">
-          <div className="h-full bg-cyan-500 transition-all duration-500" style={{ width: loadingStep.includes('Mapping') ? '80%' : '40%' }}></div>
+          <div className="h-full bg-cyan-500 transition-all duration-500" style={{ width: `${loadingProgress}%` }}></div>
         </div>
       </div>
     );
@@ -246,7 +284,7 @@ const App: React.FC = () => {
       {showMissionSelector && (
         <MissionSelector
           options={missionOptions}
-          onSelect={(topic) => initGame(topic)}
+          onSelect={(mission) => initGame(mission)}
           isLoading={isHyperjumping}
           prefetchedState={prefetchedState}
         />
