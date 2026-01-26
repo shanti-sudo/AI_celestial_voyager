@@ -27,7 +27,7 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
   const prompt = `Analyze this NASA space image entitled "${imageTitle}".
   Official Description: "${imageDescription}"
 
-  Your task is to identify exactly 5-8 interesting celestial objects (stars, nebulae, galaxies, clusters) visible in this image.
+  Your task is to identify exactly 4-6 interesting celestial objects (stars, nebulae, galaxies) visible in this image.
   
   CRITICAL INSTRUCTION - TRIANGULATION:
   1. Cross-reference the visual features in the provided image with the official NASA data provided above.
@@ -44,10 +44,8 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
   - type: one of ['star', 'nebula', 'galaxy', 'planet', 'other']
   - thoughtSignature: A short string explaining your triangulation process (e.g. "Visual match confirmed against Hubble Catalog data for [Object Name]").
   
-  Make sure the coordinates accurately reflect the location of the objects in the image.
-  CRITICAL: DISTRIBUTE targets across the image. AVOID clustering.
-  SAFETY ZONE: Ensure all POI coordinates (x, y) are strictly within the 10-90 range.
-  Ensure POIs are separated by at least 15% of the screen width from each other. Coordinate layout must be spacious.`;
+  Ensure coordinates (x, y) are accurate and within the 15-85 range.
+  Distribute points across the image to avoid clustering.`;
 
   try {
     const response = await ai.models.generateContent({

@@ -97,9 +97,9 @@ export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> 
         return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png');
       };
 
-      const highResUrl = assets.find(url => url.includes('~orig') && isStandardImage(url))
-        || assets.find(url => url.includes('~large') && isStandardImage(url))
-        || assets.find(url => url.includes('~medium') && isStandardImage(url));
+      const highResUrl = assets.find(url => url.includes('~large') && isStandardImage(url))
+        || assets.find(url => url.includes('~medium') && isStandardImage(url))
+        || assets.find(url => url.includes('~orig') && isStandardImage(url));
 
       const lowResUrl = assets.find(url => url.includes('~small') && isStandardImage(url))
         || assets.find(url => url.includes('~thumb') && isStandardImage(url))
@@ -139,9 +139,10 @@ export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> 
     };
 
     // Stricter High-Res Priority: verify we actually get a decent size
-    const highResUrl = assets.find(url => url.includes('~orig') && isStandardImage(url))
-      || assets.find(url => url.includes('~large') && isStandardImage(url))
-      || assets.find(url => url.includes('~medium') && isStandardImage(url));
+    // Prefer Large/Medium for web performance, only use Orig if others missing
+    const highResUrl = assets.find(url => url.includes('~large') && isStandardImage(url))
+      || assets.find(url => url.includes('~medium') && isStandardImage(url))
+      || assets.find(url => url.includes('~orig') && isStandardImage(url));
 
     const lowResUrl = assets.find(url => url.includes('~small') && isStandardImage(url))
       || assets.find(url => url.includes('~thumb') && isStandardImage(url))
@@ -154,9 +155,15 @@ export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> 
       throw new Error("No high-resolution image asset found");
     }
 
+    const finalLowResUrl = lowResUrl || highResUrl;
+
+    if (!finalLowResUrl) {
+      throw new Error("No image assets found for this NASA item");
+    }
+
     return {
       url: highResUrl,
-      analysisUrl: lowResUrl!,
+      analysisUrl: finalLowResUrl,
       title: itemData.title || "Unknown Stellar Object",
       description: itemData.description || "Captured by deep space observation arrays.",
       date: itemData.date_created || new Date().toISOString()

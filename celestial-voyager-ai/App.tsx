@@ -21,27 +21,61 @@ const App: React.FC = () => {
   const [isFetchingOptions, setIsFetchingOptions] = useState(false);
   const [isSectorComplete, setIsSectorComplete] = useState(false);
 
-  // Guard against duplicate initialization
+  // Guard against duplicate initialization and handle unmounting
   const isInitializing = React.useRef(false);
+  const isMounted = React.useRef(true);
+  const retryTimeoutRef = React.useRef<number | null>(null);
+  // Pre-fetch cache for mission images, base64 data, and AI points
+  const prefetchedImages = React.useRef<Record<string, NASAImage>>({});
+  const prefetchedBase64 = React.useRef<Record<string, string>>({});
+  const prefetchedPoints = React.useRef<Record<string, POI[]>>({});
+  const [prefetchedState, setPrefetchedState] = useState<Record<string, 'loading' | 'ready' | 'error'>>({});
 
   const startMissionDiscovery = async () => {
     // 1. Show loading state for options
     setIsFetchingOptions(true);
     setLoadingStep('Scanning for Mission Targets...');
 
-    // 2. Fetch AI options
-    const options = await generateMissionOptions();
-    setMissionOptions(options);
+    try {
+      // 2. Fetch AI options
+      const options = await generateMissionOptions();
+      setMissionOptions(options);
 
-    // 3. Keep loading false (so main game loop doesn't restart yet), but show selector
-    setIsFetchingOptions(false);
-    setShowMissionSelector(true);
+      // 3. Trigger NASA pre-fetches, base64 conversion AND AI analysis in background
+      options.forEach(opt => {
+        setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'loading' }));
+        fetchSpaceImage(opt.topic)
+          .then(async img => {
+            prefetchedImages.current[opt.topic] = img;
+            // A. Pre-convert to base64
+            const b64 = await imageToBase64(img.analysisUrl);
+            prefetchedBase64.current[opt.topic] = b64;
+
+            // B. Pre-analyze with Gemini
+            const pts = await analyzeSpaceImage(b64, img.title, img.description);
+            prefetchedPoints.current[opt.topic] = pts;
+
+            setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'ready' }));
+            console.log(`Mission Pipeline Ready: ${opt.topic}`);
+          })
+          .catch(e => {
+            console.warn(`Pre-fetch failed for ${opt.topic}`, e);
+            setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'error' }));
+          });
+      });
+
+      // 4. Show selector
+      setIsFetchingOptions(false);
+      setShowMissionSelector(true);
+    } catch (err) {
+      console.error("Discovery failed", err);
+      setIsFetchingOptions(false);
+    }
   };
 
   const initGame = async (specificTopic?: string) => {
     // Prevent concurrent initialization
-    if (isInitializing.current) {
-      console.log('Init already in progress, skipping duplicate call');
+    if (isInitializing.current || !isMounted.current) {
       return;
     }
 
@@ -50,68 +84,90 @@ const App: React.FC = () => {
       setShowMissionSelector(false); // Close selector if open
 
       if (specificTopic) {
-        // Manual Jump
         setIsHyperjumping(true);
       } else {
-        // Initial Load
         setLoading(true);
       }
 
       setError(null);
-      setIsSectorComplete(false); // Reset for new mission
+      setIsSectorComplete(false);
       setLoadingStep(specificTopic ? `Targeting Sector: ${specificTopic}...` : 'Searching Star Charts...');
 
-      // 1. Fetch metadata and URL from NASA (Using specific topic if provided)
-      const nasaImg = await fetchSpaceImage(specificTopic);
+      // 1. Fetch metadata and URL from NASA (Use cache if available)
+      let nasaImg: NASAImage;
+      if (specificTopic && prefetchedImages.current[specificTopic]) {
+        nasaImg = prefetchedImages.current[specificTopic];
+        console.log('Using pre-fetched image metadata');
+      } else {
+        nasaImg = await fetchSpaceImage(specificTopic);
+      }
+
+      if (!isMounted.current) return;
 
       setLoadingStep('Calculating Warp Trajectory...');
-      // 2. Prepare for analysis (Use low-res version for speed)
-      const base64 = await imageToBase64(nasaImg.analysisUrl);
+      // 2. Prepare for analysis (Use cache if available)
+      let base64: string;
+      if (specificTopic && prefetchedBase64.current[specificTopic]) {
+        base64 = prefetchedBase64.current[specificTopic];
+        console.log('Using pre-fetched base64 data');
+      } else {
+        base64 = await imageToBase64(nasaImg.analysisUrl);
+      }
 
-      // 2.5 AI Sentry Validation (Visual Content Filter)
-      // Skip validation for user-selected missions to improve load time
-      // (AI-generated topics are pre-vetted, only validate random selections)
+      if (!isMounted.current) return;
+
+      // 2.5 AI Sentry Validation
       if (!specificTopic) {
         setLoadingStep('AI Sentry: Verifying Visuals...');
         const isValid = await validateImageContent(base64);
+        if (!isMounted.current) return;
+
         if (!isValid) {
           console.warn('Image rejected by Sentry. Retrying jump...');
           setLoadingStep('Contamination Detected. Re-routing...');
-          // Reset the flag before retry
           isInitializing.current = false;
-          // Recursive retry with a small delay to prevent rapid-fire API limits
-          setTimeout(() => initGame(specificTopic), 1500);
+          retryTimeoutRef.current = window.setTimeout(() => initGame(specificTopic), 1500);
           return;
         }
       }
 
       setLoadingStep('Gemini AI Mapping Sector...');
-      // 3. AI analysis of the new image
-      const analyzedPoints = await analyzeSpaceImage(base64, nasaImg.title, nasaImg.description);
+      console.time('Gemini_AI_Mapping');
+      // 3. AI analysis (Use cache if available)
+      let analyzedPoints: POI[];
+      if (specificTopic && prefetchedPoints.current[specificTopic]) {
+        analyzedPoints = prefetchedPoints.current[specificTopic];
+        console.log('Using pre-fetched AI points');
+      } else {
+        analyzedPoints = await analyzeSpaceImage(base64, nasaImg.title, nasaImg.description);
+      }
+      console.timeEnd('Gemini_AI_Mapping');
+      if (!isMounted.current) return;
 
       // 4. Update all state at once
-      // 4. Update all state at once - ONLY after all validations pass
       setImage(nasaImg);
       setPoints(analyzedPoints);
       setMissionId(prev => prev + 1);
 
       setLoading(false);
       isInitializing.current = false;
-      // Brief delay to ensure the new component has mounted behind the flash
-      setTimeout(() => setIsHyperjumping(false), 1200);
+      retryTimeoutRef.current = window.setTimeout(() => setIsHyperjumping(false), 800);
     } catch (err) {
       console.error(err);
+      if (!isMounted.current) return;
+
       setError('Signal Lost. Re-establishing link...');
       isInitializing.current = false;
-      setTimeout(() => initGame(specificTopic), 3000);
+      retryTimeoutRef.current = window.setTimeout(() => initGame(specificTopic), 3000);
     }
   };
 
   useEffect(() => {
-    let isMounted = true;
+    isMounted.current = true;
     initGame();
     return () => {
-      isMounted = false;
+      isMounted.current = false;
+      if (retryTimeoutRef.current) window.clearTimeout(retryTimeoutRef.current);
     };
   }, []);
 
@@ -166,6 +222,7 @@ const App: React.FC = () => {
           options={missionOptions}
           onSelect={(topic) => initGame(topic)}
           isLoading={isHyperjumping}
+          prefetchedState={prefetchedState}
         />
       )}
 

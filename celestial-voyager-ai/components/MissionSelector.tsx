@@ -5,9 +5,10 @@ interface Props {
     options: MissionOption[];
     onSelect: (topic: string) => void;
     isLoading?: boolean;
+    prefetchedState?: Record<string, 'loading' | 'ready' | 'error'>;
 }
 
-const MissionSelector: React.FC<Props> = ({ options, onSelect, isLoading }) => {
+const MissionSelector: React.FC<Props> = ({ options, onSelect, isLoading, prefetchedState }) => {
     return (
         <div className="fixed inset-0 z-[200] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-8 animate-in fade-in duration-500">
             <div className="text-center mb-12">
@@ -31,12 +32,20 @@ const MissionSelector: React.FC<Props> = ({ options, onSelect, isLoading }) => {
 
                         {/* Header / Type */}
                         <div className="relative z-10 flex justify-between items-start mb-4">
-                            <span className={`text-[10px] font-black tracking-widest uppercase px-2 py-1 rounded border ${option.type === 'DEEP_SPACE' ? 'text-purple-400 border-purple-500/30 bg-purple-900/20' :
-                                option.type === 'EARTH' ? 'text-green-400 border-green-500/30 bg-green-900/20' :
-                                    'text-amber-400 border-amber-500/30 bg-amber-900/20'
-                                }`}>
-                                {option.type.replace('_', ' ')}
-                            </span>
+                            <div className="flex flex-col gap-2">
+                                <span className={`text-[10px] font-black tracking-widest uppercase px-2 py-1 rounded border ${option.type === 'DEEP_SPACE' ? 'text-purple-400 border-purple-500/30 bg-purple-900/20' :
+                                    option.type === 'EARTH' ? 'text-green-400 border-green-500/30 bg-green-900/20' :
+                                        'text-amber-400 border-amber-500/30 bg-amber-900/20'
+                                    }`}>
+                                    {option.type.replace('_', ' ')}
+                                </span>
+                                {prefetchedState?.[option.topic] === 'ready' && (
+                                    <span className="text-[9px] font-black text-cyan-400 bg-cyan-950/40 border border-cyan-500/40 px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                                        COORDINATES LOCKED
+                                    </span>
+                                )}
+                            </div>
                             <span className="text-slate-600 font-mono text-[10px]">CMD-{idx + 1}</span>
                         </div>
 
