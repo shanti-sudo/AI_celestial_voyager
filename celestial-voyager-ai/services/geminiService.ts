@@ -24,16 +24,16 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
 
   const ai = new GoogleGenAI({ apiKey });
 
-  const prompt = `Analyze this NASA space image entitled "${imageTitle}".
+  const prompt = `Role: You are a Forensic Physics Analyst.
+  Objective: Perform a Measured Deep Scan on the NASA space image entitled "${imageTitle}" to identify POIs (Points of Interest).
   Official Description: "${imageDescription}"
 
-  Your task is to identify exactly 4-6 interesting celestial objects (stars, nebulae, galaxies) visible in this image.
-  
-  CRITICAL INSTRUCTION - TRIANGULATION:
-  1. Cross-reference the visual features in the provided image with the official NASA data provided above.
-  2. Use your internal astronomical knowledge base to "triangulate" and verify the specific identity of objects (e.g., if the image is Carina Nebula, identify specific known pillars or stars within it).
-  3. Ensure every POI is a scientifically accurate feature of THIS specific celestial object.
-  
+  Instructions to Prevent Hallucination:
+  1. Zero-Probability Threshold: Do not label any feature if its existence is purely probabilistic. Only identify features with a Radiometric Signature or Geometric Proof.
+  2. VISUAL CENTER LOCK: For any identified feature, coordinates MUST point to the **Visual Center of Mass** (e.g., the brightest pixel or the geometric center of the specific visible shape). Do not point to the centroid of a diffuse "zone" if a distinct object (like a moon or star) is the primary visual anchor.
+  3. Spectral Constraints: If scanning Earth/Space features, identify the specific Bands (e.g., 557.7nm for green airglow). If the pixel color does not match a known atmospheric chemical emission, mark it as "Unidentified/Noise."
+  4. Coordinate Precision: Output all POIs ensuring normalized coordinates are correctly mapped to a 0-100 percentage scale for the system.
+
   Return the results as a JSON array of objects.
   For each object, provide:
   - id: unique string
@@ -42,9 +42,9 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
   - x: horizontal position as a percentage (0-100)
   - y: vertical position as a percentage (0-100)
   - type: one of ['star', 'nebula', 'galaxy', 'planet', 'other']
-  - thoughtSignature: A short string explaining your triangulation process (e.g. "Visual match confirmed against Hubble Catalog data for [Object Name]").
+  - thoughtSignature: A short string explaining your verification process (e.g., "Radiometric signature confirmed at 557.7nm; Geometric proof via shadow triangulation").
   
-  Ensure coordinates (x, y) are accurate and within the 15-85 range.
+  Ensure coordinates (x, y) are accurate and reflect the true visual center of the feature (0-100 scale). Do not artificially compress coordinates away from edges.
   Distribute points across the image to avoid clustering.`;
 
   try {
@@ -89,42 +89,13 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
 
     let points: POI[] = JSON.parse(jsonText);
 
-    // POST-PROCESSING: Enforcement of Non-Overlap (Physics Repulsion)
-    // Moderated to ensure visual accuracy remains priority
-    const MIN_DISTANCE = 8; // Reduced from 15 to keep markers closer to visual features
-    const ITERATIONS = 2; // Reduced passes to minimize drift
+    // POST-PROCESSING: Physics Repulsion REMOVED
+    // The "Forensic Physics Analyst" model provides high-precision coordinates.
+    // Artificial repulsion causes markers to drift from their actual geological/celestial targets.
+    // We strictly trust the AI's "Geometric Proof" coordinates.
 
-    for (let iter = 0; iter < ITERATIONS; iter++) {
-      for (let i = 0; i < points.length; i++) {
-        for (let j = i + 1; j < points.length; j++) {
-          const p1 = points[i];
-          const p2 = points[j];
-          const dx = p2.x - p1.x;
-          const dy = p2.y - p1.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-
-          if (dist < MIN_DISTANCE && dist > 0) {
-            // Calculate repulsion vector
-            const overlap = MIN_DISTANCE - dist;
-            const angle = Math.atan2(dy, dx);
-
-            // Move p2 away
-            const moveX = Math.cos(angle) * overlap;
-            const moveY = Math.sin(angle) * overlap;
-
-            p2.x += moveX;
-            p2.y += moveY;
-
-            // Keep within bounds (10-90%) - POI Safety Zone
-            p2.x = Math.max(10, Math.min(90, p2.x));
-            p2.y = Math.max(10, Math.min(90, p2.y));
-          } else if (dist === 0) {
-            // Handle exact overlap with random nudge
-            p2.x += 5;
-          }
-        }
-      }
-    }
+    // Simple bounds check REMOVED to allow full edge-to-edge accuracy.
+    // relying on the AI's "0-100 scale" adherence.
 
     return points;
   } catch (error) {
@@ -237,16 +208,17 @@ export const generateMissionOptions = async (): Promise<MissionOption[]> => {
   const seed = Date.now();
   const prompt = `Generate 3 distinct, UNIQUE space exploration mission targets for a sci-fi interface. 
   Random Seed context: ${seed}.
-  IMPORTANT: Avoid generic topics like "Nebula" or "Galaxy" alone. Be specific.
+
+  CORE REQUIREMENT: The targets must be well-documented objects or events with a high probability of having high-resolution photography in the NASA Image Library.
   
   Categories:
-  1. DEEP_SPACE: A specific, visually stunning Nebula, Galaxy, or Star Cluster (e.g., "Carina Nebula", "Sombrero Galaxy").
-  2. EARTH: A specific Earth phenomenon (e.g., "Aurora Australis", "Pacific Cyclone", "Sahara Dust Plume").
-  3. TRENDING: A current "hot topic" in space science, a famous historical mission, or a recent discovery (e.g., "Mars Perseverance Rover", "James Webb Deep Field", "Voyager 1 Signal", "Parker Solar Probe").
+  1. DEEP_SPACE: A specific, visually stunning Nebula, Galaxy, or Star Cluster from the Hubble or JWST catalogs (e.g., "Carina Nebula", "Sombrero Galaxy", "Pillars of Creation").
+  2. EARTH: A specific, visually distinct Earth phenomenon captured by orbital assets (e.g., "Aurora Borealis", "Saharan Dust", "Mount Etna Eruption").
+  3. TRENDING: A famous historical mission or recent landmark discovery that has extensive NASA imagery (e.g., "Cassini Saturn", "Mars Perseverance", "Juno Jupiter", "James Webb Deep Field").
   
   Return JSON array of 3 objects with:
   - id: unique string
-  - topic: The exact search string to query NASA's image database.
+  - topic: A SIMPLE, PROVEN keyword search string optimized for the NASA Images API (e.g. "Enceladus", "Messier 81", "Mars Rover"). Avoid phrases; use names.
   - title: A cool, sci-fi mission name.
   - description: Very short, punchy briefing (max 12 words).
   - type: One of ['DEEP_SPACE', 'EARTH', 'TRENDING']

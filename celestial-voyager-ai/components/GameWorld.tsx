@@ -25,7 +25,7 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
 
   // Filter points to ensure only safe/visible ones are used throughout the component
   const validPoints = React.useMemo(() =>
-    points.filter(poi => poi.x >= 5 && poi.x <= 95 && poi.y >= 5 && poi.y <= 95),
+    points.filter(poi => poi.x >= 0 && poi.x <= 100 && poi.y >= 0 && poi.y <= 100),
     [points]);
 
   const [rotation, setRotation] = useState(0);

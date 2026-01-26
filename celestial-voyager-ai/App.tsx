@@ -38,31 +38,57 @@ const App: React.FC = () => {
 
     try {
       // 2. Fetch AI options
-      const options = await generateMissionOptions();
-      setMissionOptions(options);
+      const rawOptions = await generateMissionOptions();
 
-      // 3. Trigger NASA pre-fetches, base64 conversion AND AI analysis in background
-      options.forEach(opt => {
-        setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'loading' }));
-        fetchSpaceImage(opt.topic)
-          .then(async img => {
-            prefetchedImages.current[opt.topic] = img;
-            // A. Pre-convert to base64
-            const b64 = await imageToBase64(img.analysisUrl);
-            prefetchedBase64.current[opt.topic] = b64;
+      // 3. VALIDATION PHASE: Check if NASA actually has images for these topics (Strict Mode)
+      // We run this in parallel to be fast.
+      const validationResults = await Promise.allSettled(
+        rawOptions.map(async (opt) => {
+          const img = await fetchSpaceImage(opt.topic, true); // Strict Mode = True
+          return { opt, img };
+        })
+      );
 
-            // B. Pre-analyze with Gemini
-            const pts = await analyzeSpaceImage(b64, img.title, img.description);
-            prefetchedPoints.current[opt.topic] = pts;
+      const validOptions: MissionOption[] = [];
 
-            setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'ready' }));
-            console.log(`Mission Pipeline Ready: ${opt.topic}`);
-          })
-          .catch(e => {
-            console.warn(`Pre-fetch failed for ${opt.topic}`, e);
-            setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'error' }));
-          });
-      });
+      // Process results and populate cache immediately for the valid ones
+      for (const result of validationResults) {
+        if (result.status === 'fulfilled') {
+          const { opt, img } = result.value;
+          validOptions.push(opt);
+
+          // Populate cache since we already have the image!
+          prefetchedImages.current[opt.topic] = img;
+          setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'loading' })); // Already loaded image, but processing AI
+
+          // Continue background processing (Base64 + Gemini)
+          // We don't await this part, we let it run in background to speed up UI
+          (async () => {
+            try {
+              const b64 = await imageToBase64(img.analysisUrl);
+              prefetchedBase64.current[opt.topic] = b64;
+
+              const pts = await analyzeSpaceImage(b64, img.title, img.description);
+              prefetchedPoints.current[opt.topic] = pts;
+
+              setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'ready' }));
+              console.log(`Mission Pipeline Ready: ${opt.topic}`);
+            } catch (e) {
+              console.error(`Post-validation processing failed for ${opt.topic}`, e);
+              setPrefetchedState(prev => ({ ...prev, [opt.topic]: 'error' }));
+            }
+          })();
+
+        } else {
+          console.warn(`Option '${result.reason?.message || "Unknown"}' rejected: No valid images found.`);
+        }
+      }
+
+      if (validOptions.length === 0) {
+        throw new Error("No valid mission targets found in this sector scan.");
+      }
+
+      setMissionOptions(validOptions);
 
       // 4. Show selector
       setIsFetchingOptions(false);

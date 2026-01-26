@@ -4,7 +4,7 @@ import { NASAImage } from '../types';
 /**
  * Service to fetch high-resolution celestial imagery from the NASA Image and Video Library.
  */
-export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> => {
+export const fetchSpaceImage = async (customTopic?: string, strictMode: boolean = false): Promise<NASAImage> => {
   // Original API Logic Enabled
   // Stricter keywords focused on deep space structures
   // Stricter keywords focused on deep space structures AND Earth as requested
@@ -29,12 +29,19 @@ export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> 
     'meeting', 'conference', 'laboratory', 'building', 'facility', 'center',
     'diagram', 'chart', 'graph', 'plot', 'artist concept', 'illustration', 'artist\'s impression', 'animation',
     'airplane', 'aircraft', 'rocket', 'vehicle',
-    'hand', 'hands', 'leg', 'legs', 'finger', 'fingers', 'profile', 'selfie', 'body'
+    'hand', 'hands', 'leg', 'legs', 'finger', 'fingers', 'selfie', 'body'
   ];
 
   const validateImageItem = (item: any): boolean => {
     const text = (item.data[0].title + " " + (item.data[0].description || "") + " " + (item.data[0].keywords || []).join(" ")).toLowerCase();
-    const hasBannedTerm = BANNED_TERMS.some(term => text.includes(term));
+
+    // Strict whole-word matching to avoid false positives (e.g. "face" in "surface")
+    const hasBannedTerm = BANNED_TERMS.some(term => {
+      // Escape special regex characters if any (though our list is simple)
+      const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escapedTerm}\\b`, 'i');
+      return regex.test(text);
+    });
     return !hasBannedTerm;
   };
 
@@ -51,14 +58,34 @@ export const fetchSpaceImage = async (customTopic?: string): Promise<NASAImage> 
     const data = await response.json();
     const items = data.collection.items;
 
-    if (!items || items.length === 0) {
-      throw new Error(`No NASA images found for keyword: ${keyword}`);
+    // Filter items using our strict validation (No humans/machines)
+    let validItems: any[] = [];
+
+    if (items && items.length > 0) {
+      validItems = items.filter(validateImageItem);
+    } else {
+      console.warn(`No raw results found for '${keyword}' (possibly a typo). Proceeding to fallback.`);
     }
 
-    // Filter items using our strict validation (No humans/machines)
-    const validItems = items.filter(validateImageItem);
+    // INTELLIGENT FALLBACK:
+    // If we have a custom topic but strict validation killed all results (likely due to "artist concept" or similiar),
+    // we try to relax the filter SLIGHTLY for that specific topic before giving up and showing random "nebula".
+    if (validItems.length === 0 && customTopic) {
+      console.warn(`Strict validation removed all results for '${customTopic}'. Retrying with relaxed filter.`);
+      // Relaxed filter: Only ban obviously human terms, allow "illustration/machines" for specific queries like "Voyager" or "Rover"
+      const CRITICAL_BANS = ['person', 'people', 'human', 'face', 'man', 'woman', 'selfie'];
+      const validateRelaxed = (item: any) => {
+        const text = (item.data[0].title + " " + (item.data[0].description || "")).toLowerCase();
+        return !CRITICAL_BANS.some(term => new RegExp(`\\b${term}\\b`, 'i').test(text));
+      };
+      validItems = items.filter(validateRelaxed);
+    }
 
     if (validItems.length === 0) {
+      if (strictMode) {
+        throw new Error(`Strict Mode: No valid images found for '${keyword}' after filtering.`);
+      }
+
       console.warn(`All images for '${keyword}' contained banned terms. Trying safer fallback keywords...`);
       // Instead of throwing, try a safer fallback keyword that's less likely to have banned content
       const safeFallbacks = ['nebula', 'galaxy cluster', 'deep space', 'star field', 'cosmic dust'];
