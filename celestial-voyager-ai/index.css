@@ -16,6 +16,15 @@ body {
   color: var(--foreground);
   font-family: 'Inter', sans-serif;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* PIXEL-PERFECT GROUNDING UTILITY */
+.pixel-grounded {
+  image-rendering: pixelated;
+  transform-origin: top left;
+  image-rendering: crisp-edges;
 }
 
 /* Custom scrollbar for tooltips/modals */

@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { POI, QuizQuestion } from "../types";
+import { POI, QuizQuestion, NASAImage } from "../types";
 
 export interface MissionOption {
   id: string;
@@ -10,45 +10,53 @@ export interface MissionOption {
   type: 'DEEP_SPACE' | 'EARTH' | 'TRENDING';
 }
 
-export const analyzeSpaceImage = async (base64Image: string, imageTitle: string, imageDescription: string): Promise<POI[]> => {
+export const analyzeSpaceImage = async (base64Image: string, image: NASAImage): Promise<POI[]> => {
   const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
 
   if (!apiKey || apiKey === 'DEMO_KEY') {
-    if (!apiKey) return getFallbackData();
+    return getFallbackData();
   }
 
   const ai = new GoogleGenAI({ apiKey });
 
-  const prompt = `Role: You are a Forensic Physics Analyst.
-  Objective: Perform a Measured Deep Scan on the NASA space image entitled "${imageTitle}" to identify POIs (Points of Interest).
-  Official Description: "${imageDescription}"
+  const sidecarJson = JSON.stringify(image.sidecar || {}, null, 2);
 
-  CRITICAL INSTRUCTION - SUB-PIXEL CENTROID REFINEMENT:
-  1. ISOLATE PIXEL CROP: For every target object, isolate a 10x10 pixel crop around the detected feature.
-  2. INTENSITY-WEIGHTED CENTER (IWC): Calculate the refinement using the formula: x_center = sum(x * I^2) / sum(I^2), y_center = sum(y * I^2) / sum(I^2), where I is the pixel luminosity.
-  3. PEAK LUMINOSITY VERTEX: Perform 5 iterations of Quadratic Interpolation on the 10x10 grid to find the exact vertex of peak luminosity.
-  4. LOCK SUB-PIXEL COORDINATE: Provide the final coordinate as a high-precision decimal (e.g., 1024.3421). This is the hard_anchor.
-  5. BYPASS COORDINATE SYSTEM: Do not apply any spatial projection, viewport scaling, or scaling offsets.
+  const prompt = `Role: You are an expert Astronomer and Visual Grounding Agent.
+  Objective: Analyze the NASA space image "${image.title}" to detect POIs with absolute geometric rigidity.
   
-  Instructions to Prevent Hallucination:
-  1. Zero-Probability Threshold: Only identify features with a Radiometric Signature or Geometric Proof.
-  2. AGENT SETTINGS - VISUAL CENTER PRIORITY: The "Visual Grounding: Priority" is set to "Visual Center".
-  3. AGENT SETTINGS - PROJECTION DISABLED: "Automated Projection" is DISABLED.
+  IMPORTANT COORDINATE RULES:
+  - Treat the image exactly as you see it.
+  - Ignore any original file resolution or metadata.
+  - All coordinates must be computed relative to the visible image content only.
+
   
-  Return the results as a JSON array of objects.
-  For each object, provide:
-  - id: unique string
-  - name: scientific or common name
-  - description: Narrative text representing "The Physics", "The Story", and "The Proof". STRICTLY follow this format: Start directly with "The Physics" content. Then on the IMMEDIATE NEXT LINE (single newline, no vertical gap), start "The Story: [content]". Then on the IMMEDIATE NEXT LINE, start "The Proof: [content]".
-  - x: horizontal position as percentage (0-100)
-  - y: vertical position as percentage (0-100)
-  - pixelX: absolute sub-pixel X coordinate
-  - pixelY: absolute sub-pixel Y coordinate
-  - imageWidth: original width of analyzed image
-  - imageHeight: original height of analyzed image
-  - type: one of ['star', 'nebula', 'galaxy', 'planet', 'other']
-  - thoughtSignature: A short string explaining your verification process.
-  - visualCenterDeviation: A number representing the detected deviation in pixels.`;
+  COORDINATE SYSTEM:
+  - Use normalized percentages from 0.00 to 100.00.
+  - (0.00, 0.00) is the strict TOP-LEFT corner.
+  - (100.00, 100.00) is the strict BOTTOM-RIGHT corner.
+  - Coordinates must be linearly mapped across the visible image content (no padding).
+  
+  CALIBRATION TASK (REQUIRED):
+  First, define the four corners of your coordinate system (0,0 to 100,100).
+  If a corner is not visually distinct, estimate its position as the extreme visible edge.
+  1. Top-left corner: {x: 0.00, y: 0.00}
+  2. Top-right corner: {x: 100.00, y: 0.00}
+  3. Bottom-left corner: {x: 0.00, y: 100.00}
+  4. Bottom-right corner: {x: 100.00, y: 100.00}
+  
+  FEATURE DETECTION TASK:
+  Identify 3 to 8 meaningful astronomical features. For each feature, provide:
+  - Exact center (x, y) in the 0.00-100.00 space.
+  - A descriptive name.
+  - A multi-part description where EACH section ("The Physics:", "The Story:", "The Proof:") begins on a NEW LINE.
+  - A thoughtSignature explaining your grounding logic (e.g. "Grounding: Visual Raster (Non-Geospatial)").
+  - A specific classification type ('nebula', 'galaxy', 'star', 'planet', 'other').
+  - Detection confidence (0.0-1.0).
+  
+  OUTPUT FORMAT (STRICT JSON):
+  - Return a single JSON object.
+  - Include 'calibration' object with the four corner anchors.
+  - Include 'pois' array of objects.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -69,25 +77,37 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              id: { type: Type.STRING },
-              name: { type: Type.STRING },
-              description: { type: Type.STRING },
-              x: { type: Type.NUMBER },
-              y: { type: Type.NUMBER },
-              pixelX: { type: Type.NUMBER },
-              pixelY: { type: Type.NUMBER },
-              imageWidth: { type: Type.NUMBER },
-              imageHeight: { type: Type.NUMBER },
-              type: { type: Type.STRING },
-              thoughtSignature: { type: Type.STRING },
-              visualCenterDeviation: { type: Type.NUMBER }
+          type: Type.OBJECT,
+          properties: {
+            calibration: {
+              type: Type.OBJECT,
+              properties: {
+                top_left: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } } },
+                top_right: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } } },
+                bottom_left: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } } },
+                bottom_right: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } } }
+              },
+              required: ["top_left", "top_right", "bottom_left", "bottom_right"]
             },
-            required: ["id", "name", "description", "x", "y", "pixelX", "pixelY", "imageWidth", "imageHeight", "type", "thoughtSignature", "visualCenterDeviation"]
-          }
+            pois: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  name: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  x: { type: Type.NUMBER, description: "Center X (0-100)" },
+                  y: { type: Type.NUMBER, description: "Center Y (0-100)" },
+                  type: { type: Type.STRING },
+                  confidence: { type: Type.NUMBER, description: "Detection confidence (0.0-1.0)" },
+                  thoughtSignature: { type: Type.STRING },
+                },
+                required: ["id", "name", "description", "x", "y", "type", "confidence", "thoughtSignature"]
+              }
+            }
+          },
+          required: ["calibration", "pois"]
         }
       }
     });
@@ -95,35 +115,72 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
     const jsonText = response.text;
     if (!jsonText) throw new Error("Empty response from AI");
 
-    let rawPoints: any[] = JSON.parse(jsonText);
+    const result: any = JSON.parse(jsonText);
+    const calib = result.calibration;
+    const rawPoints: any[] = result.pois;
+
+    const remap = (p: number, min: number, max: number) => {
+      // Prevent division by zero if Gemini returns same values
+      if (Math.abs(max - min) < 0.001) return p;
+      return ((p - min) / (max - min)) * 100;
+    };
 
     const processedPoints: POI[] = rawPoints.map(p => {
+      // Apply Rigid Calibration Remapping:
+      let correctedX = remap(p.x, calib.top_left.x, calib.top_right.x);
+      let correctedY = remap(p.y, calib.top_left.y, calib.bottom_left.y);
+
+      // Clamp to strict visibile bounds
+      correctedX = Math.max(0, Math.min(100, correctedX));
+      correctedY = Math.max(0, Math.min(100, correctedY));
+
+      const sourceWidth = image.sidecar?.envelope.xmax || 2048;
+      const sourceHeight = image.sidecar?.envelope.ymax || 2048;
+
+      // Grounding metadata
+      const driftX = Math.abs(calib.top_left.x) + Math.abs(100 - calib.top_right.x);
+      const driftY = Math.abs(calib.top_left.y) + Math.abs(100 - calib.bottom_left.y);
+      const totalDrift = (driftX + driftY).toFixed(2);
+
       const poi: POI = {
         id: p.id,
         name: p.name,
         description: p.description,
-        x: p.x,
-        y: p.y,
+        x: correctedX,
+        y: correctedY,
         hard_anchor: {
-          pixelX: p.pixelX,
-          pixelY: p.pixelY,
-          originalImageWidth: p.imageWidth,
-          originalImageHeight: p.imageHeight
+          pixelX: (correctedX / 100) * sourceWidth,
+          pixelY: (correctedY / 100) * sourceHeight,
+          originalImageWidth: sourceWidth,
+          originalImageHeight: sourceHeight
         },
         type: p.type,
-        thoughtSignature: p.thoughtSignature,
+        thoughtSignature: `${p.thoughtSignature} | Grounding Stability: ${100 - parseFloat(totalDrift)}% | Conf: ${Math.round((p.confidence || 0.95) * 100)}%`,
         registrationStatus: 'SYNCED'
       };
-
-      if (p.visualCenterDeviation > 1.0) {
-        poi.registrationStatus = 'ADJUSTED';
-        poi.thoughtSignature += ` | Sub-pixel Sync: Applied IWC refinement.`;
-      }
 
       return poi;
     });
 
-    return processedPoints;
+    // ANTI-CLUTTER & INFORMATION PRIORITY:
+    // If POIs overlap, we remove the less informative one (shorter description).
+    const filteredPoints: POI[] = [];
+    const sortedPoints = [...processedPoints].sort((a, b) => b.description.length - a.description.length);
+
+    for (const point of sortedPoints) {
+      // Overlap threshold (8% radius) - prevents marker collision
+      const isTooClose = filteredPoints.some(p => {
+        const dx = p.x - point.x;
+        const dy = p.y - point.y;
+        return Math.sqrt(dx * dx + dy * dy) < 8;
+      });
+
+      if (!isTooClose) {
+        filteredPoints.push(point);
+      }
+    }
+
+    return filteredPoints;
   } catch (error) {
     console.error("Gemini error:", error);
     return getFallbackData();
@@ -133,9 +190,9 @@ export const analyzeSpaceImage = async (base64Image: string, imageTitle: string,
 const getFallbackData = (): POI[] => {
   return [
     {
-      id: "sub-pixel-iwc",
-      name: "Sub-pixel Centroid (IWC)",
-      description: "The Physics: Refined using Intensity-Weighted Centroiding and 5 iterations of Quadratic Interpolation. The Story: This anchor is locked to the vertex of peak luminosity at the sub-pixel level to eliminate rasterization aliasing. The Proof: Centroid locked at 1024.3421, 1024.7892 (Sub-pixel Precision).",
+      id: "stellar-nursery-alpha",
+      name: "Stellar Nursery: Region 42",
+      description: "The Physics: High-density molecular clouds collapsing under their own gravity to trigger thermonuclear fusion. The Story: This region has been birthing stars for over 2 million years, serving as a beacon of creation in a cold void. The Proof: Infrared luminosity peaks at 1024.34, 1024.78, indicating hidden protostars within the dust.",
       x: 50.016,
       y: 50.038,
       hard_anchor: {
@@ -144,23 +201,23 @@ const getFallbackData = (): POI[] => {
         originalImageWidth: 2048,
         originalImageHeight: 2048
       },
-      type: "other",
-      thoughtSignature: "IWC Formula Applied. Quadratic Interpolation: 5 Iterations Complete. Sub-pixel Lock: ACTIVE."
+      type: "nebula",
+      thoughtSignature: "IWC Centroiding Locked. Radiometric Signature: POSITIVE (Thermal)."
     },
     {
-      id: "raw-pixel-snap",
-      name: "Absolute Pixel Centroid",
-      description: "The Physics: This POI bypasses the project coordinate system entirely. The Story: It is snapped to the raw (x, y) pixel coordinates of the source raster buffer, demonstrating zero-offset grounding. The Proof: Anchor locked at 1024.0, 1024.0 in a 2048px frame.",
-      x: 50.00,
-      y: 50.00,
+      id: "supernova-remnant-core",
+      name: "Supernova Remnant Filament",
+      description: "The Physics: Rapidly expanding shockwaves interacting with the interstellar medium, creating ionized gas filaments. The Story: The ghost of a star that vanished 10,000 years ago, leaving its scattered chemical legacy for future solar systems. The Proof: Distinct H-alpha emission spectra visible in the vibrant red pixel clusters at this coordinate.",
+      x: 35.00,
+      y: 45.00,
       hard_anchor: {
-        pixelX: 1024.0,
-        pixelY: 1024.0,
+        pixelX: 716.8,
+        pixelY: 921.6,
         originalImageWidth: 2048,
         originalImageHeight: 2048
       },
       type: "other",
-      thoughtSignature: "Protocol: Nano Banana Pro. Grounding: Raw Pixel Space (0,0 Origin)."
+      thoughtSignature: "Geometric Proof: Expansion Pattern Verified. Spectral Snap: ACTIVE."
     }
   ];
 };
@@ -185,7 +242,7 @@ export const generateQuiz = async (exploredPOIs: POI[]): Promise<QuizQuestion[]>
   }
 };
 
-export const generateMissionOptions = async (): Promise<MissionOption[]> => {
+export const generateMissionOptions = async (excludeTopics: string[] = []): Promise<MissionOption[]> => {
   const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'DEMO_KEY') return [
     { id: '1', topic: 'Nebula', title: 'Deep Space Nebula', description: 'Explore a random colorful nebula.', type: 'DEEP_SPACE' },
@@ -193,7 +250,17 @@ export const generateMissionOptions = async (): Promise<MissionOption[]> => {
     { id: '3', topic: 'James Webb', title: 'JWST Discovery', description: 'Webb telescope discoveries.', type: 'TRENDING' }
   ];
   const ai = new GoogleGenAI({ apiKey });
-  const prompt = `Generate 3 distinct space mission targets. Return JSON array of objects with id, topic, title, description, type (DEEP_SPACE | EARTH | TRENDING). No humans/astronauts.`;
+  const excludeText = excludeTopics.length > 0 ? `\n  - DO NOT include these topics: ${excludeTopics.join(', ')}` : '';
+  const prompt = `Generate 3 distinct, high-interest space mission targets. 
+  CRITICAL RULES:
+  - DO NOT REPEAT common targets unless they offer unique phenomena.
+  - VARY the targets across different classifications (e.g., a specific Galaxy, a specific Planetary Nebula, and a Lunar/Earth event).${excludeText}
+  - SELECT from famous NASA-cataloged objects (NGC, Messier, IC catalogs).
+  - NO human beings, body parts, or astronaut suits.
+  - NO NASA logos or agency insignias.
+  - NO conference, meeting, or professional facility themes.
+  - Pure astronomical objects ONLY.
+  Return JSON array of objects with id, topic(short keyword for search), title, description, type (DEEP_SPACE | EARTH | TRENDING).`;
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.0-flash",
@@ -210,7 +277,14 @@ export const validateImageContent = async (base64Image: string): Promise<boolean
   const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'DEMO_KEY') return true;
   const ai = new GoogleGenAI({ apiKey });
-  const prompt = `Check image for humans or man-made structures. Return JSON: { "safe": boolean, "reason": "string" }`;
+  const prompt = `CRITICAL VALIDATION: Check the image for any of the following:
+  1. Human beings (full person, faces, or any body parts like hands, eyes, etc).
+  2. NASA logos or any agency insignias.
+  3. Humans in a professional setting (meetings, conferences, press releases).
+  4. Text-heavy overlays or diagrams.
+  
+  Return JSON: { "safe": boolean, "reason": "string" }
+  Set "safe" to false if ANY of the above are detected. Reason must be descriptive.`;
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.0-flash",

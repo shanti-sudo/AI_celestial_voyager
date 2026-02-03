@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { fetchSpaceImage, imageToBase64 } from './services/nasaService';
 import { analyzeSpaceImage, generateMissionOptions, validateImageContent, MissionOption } from './services/geminiService';
+import { validateGroundingManifest } from './services/groundingValidator';
 import GameWorld from './components/GameWorld';
 import MissionSelector from './components/MissionSelector';
 import { NASAImage, POI } from './types';
@@ -31,6 +32,7 @@ const App: React.FC = () => {
   const prefetchedBase64 = React.useRef<Record<string, string>>({});
   const prefetchedPoints = React.useRef<Record<string, POI[]>>({});
   const [prefetchedState, setPrefetchedState] = useState<Record<string, 'loading' | 'ready' | 'error'>>({});
+  const missionHistory = React.useRef<string[]>([]);
 
   // Flavor Text Logic
   const FLAVOR_TEXTS = [
@@ -43,7 +45,17 @@ const App: React.FC = () => {
     "Scanning sector quadrants for fascinating anomalies.",
     "Aligning warp coils for rapid transit.",
     "Buffering celestial data for high-resolution clarity.",
-    "Pre-heating fusion cores for efficient energy flow."
+    "Pre-heating fusion cores for efficient energy flow.",
+    "Defragmenting cosmic ray interference patterns.",
+    "Calibrating gravimetric sensors for local distortions.",
+    "Calculating dark matter density in the forward sector.",
+    "Synchronizing time-dilation buffers for warp exit.",
+    "Analyzing spectral shift of neighboring star clusters.",
+    "Adjusting hull polarization for high-energy radiation.",
+    "Optimizing neutrino detectors for silent signatures.",
+    "Mapping relativistic corridors for safe hyperjump.",
+    "Initializing interstellar beacon handshake protocol.",
+    "Verifying vacuum seal integrity for warp transit."
   ];
 
   const availableFlavorIndices = React.useRef<number[]>([]);
@@ -70,8 +82,8 @@ const App: React.FC = () => {
     setLoadingProgress(20);
 
     try {
-      // 2. Fetch AI options
-      const rawOptions = await generateMissionOptions();
+      // 2. Fetch AI options with exclusion of history
+      const rawOptions = await generateMissionOptions(missionHistory.current.slice(-10));
 
       // 3. VALIDATION PHASE: Check if NASA actually has images for these topics (Strict Mode)
       // We run this in parallel to be fast.
@@ -94,14 +106,28 @@ const App: React.FC = () => {
           prefetchedImages.current[opt.id] = img;
           setPrefetchedState(prev => ({ ...prev, [opt.id]: 'loading' })); // Already loaded image, but processing AI
 
-          // Continue background processing (Base64 + Gemini)
-          // We don't await this part, we let it run in background to speed up UI
+          // Continue background processing (Base64 + Sentry + Gemini)
           (async () => {
             try {
-              const b64 = await imageToBase64(img.analysisUrl);
+              const { data: b64, width, height } = await imageToBase64(img.analysisUrl);
               prefetchedBase64.current[opt.id] = b64;
 
-              const pts = await analyzeSpaceImage(b64, img.title, img.description);
+              // Patch sidecar dimensions in prefetch cache
+              if (img.sidecar) {
+                img.sidecar.envelope.xmax = width;
+                img.sidecar.envelope.ymax = height;
+              }
+
+              // AI Sentry Validation for Mission Options
+              const isValid = await validateImageContent(b64);
+              if (!isValid) {
+                console.warn(`Mission option '${opt.topic}' failed Sentry validation. Removing from selectable list.`);
+                // We keep it in the options list for now but mark it error to prevent selection or filter it out
+                setPrefetchedState(prev => ({ ...prev, [opt.id]: 'error' }));
+                return;
+              }
+
+              const pts = await analyzeSpaceImage(b64, img);
               prefetchedPoints.current[opt.id] = pts;
               setPrefetchedState(prev => ({ ...prev, [opt.id]: 'ready' }));
             } catch (e) {
@@ -166,15 +192,20 @@ const App: React.FC = () => {
         nasaImg = await fetchSpaceImage(specificTopic);
       }
 
+      // Add to history to avoid repetition
+      if (nasaImg.title) {
+        missionHistory.current = [...new Set([...missionHistory.current, nasaImg.title, specificTopic || ''])].filter(Boolean);
+      }
+
       if (!isMounted.current) return;
 
-      setLoadingStep(getFlavorText());
       setLoadingProgress(45);
-      let base64: string;
-      if (missionId_key && prefetchedBase64.current[missionId_key]) {
-        base64 = prefetchedBase64.current[missionId_key];
-      } else {
-        base64 = await imageToBase64(nasaImg.analysisUrl);
+      const { data: base64, width, height } = await imageToBase64(nasaImg.analysisUrl);
+
+      // Update the sidecar with REAL dimensions once we have them from the analysis image
+      if (nasaImg.sidecar) {
+        nasaImg.sidecar.envelope.xmax = width;
+        nasaImg.sidecar.envelope.ymax = height;
       }
 
       if (!isMounted.current) return;
@@ -192,9 +223,20 @@ const App: React.FC = () => {
           console.warn('Image rejected by Sentry. Retrying jump...');
           setLoadingStep('Contamination Detected. Re-routing...');
           isInitializing.current = false;
-          // For missions, we might want to go back to selector, but for now retry works
           retryTimeoutRef.current = window.setTimeout(() => initGame(mission), 1500);
           return;
+        }
+
+        // 2.6 Geometric Grounding Validation (Anti-Leakage)
+        if (nasaImg.sidecar) {
+          const grounding = validateGroundingManifest(nasaImg, nasaImg.sidecar);
+          if (!grounding.valid) {
+            console.warn('Image rejected due to Geometric Noise:', grounding.errors);
+            setLoadingStep('Geometric Drift Detected. Recalibrating...');
+            isInitializing.current = false;
+            retryTimeoutRef.current = window.setTimeout(() => initGame(mission), 1500);
+            return;
+          }
         }
       }
 
@@ -203,7 +245,7 @@ const App: React.FC = () => {
       if (missionId_key && prefetchedPoints.current[missionId_key]) {
         analyzedPoints = prefetchedPoints.current[missionId_key];
       } else {
-        analyzedPoints = await analyzeSpaceImage(base64, nasaImg.title, nasaImg.description);
+        analyzedPoints = await analyzeSpaceImage(base64, nasaImg);
       }
       if (!isMounted.current) return;
 
@@ -290,10 +332,6 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* 
-        CRITICAL: Using image.url as a KEY ensures the GameWorld 
-        remounts from scratch whenever a new mission starts.
-      */}
       {image && !showMissionSelector && (
         <GameWorld
           key={`${image.url}-${missionId}`}

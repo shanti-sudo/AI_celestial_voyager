@@ -1,23 +1,33 @@
 
-import { NASAImage } from '../types';
+import { NASAImage, CelestialSidecar } from '../types';
 
 /**
  * Service to fetch high-resolution celestial imagery from the NASA Image and Video Library.
  */
 export const fetchSpaceImage = async (customTopic?: string, strictMode: boolean = false): Promise<NASAImage> => {
-  // Original API Logic Enabled
-  // Stricter keywords focused on deep space structures
-  // Stricter keywords focused on deep space structures AND Earth as requested
-  // Added Earth-specific terms for "latest happening" context
   const keywords = [
-    // Deep Space
-    // Pure Deep Space
-    'nebula', 'spiral galaxy', 'elliptical galaxy', 'supernova remnant', 'globular cluster',
-    'open star cluster', 'planetary nebula', 'molecular cloud', 'dark nebula',
-    'pillars of creation', 'carina nebula', 'orion nebula', 'tarantula nebula', 'whirlpool galaxy', 'sombrero galaxy',
-    'messier 81', 'crab nebula', 'eagle nebula', 'lagoon nebula',
-    // Earth Limb/Atmosphere (Strictly uninhabited)
-    'earth limb', 'aurora borealis', 'airglow', 'cloud deck', 'atmosphere from orbit'
+    // Famous Nebulae & Regions
+    'pillars of creation', 'carina nebula', 'orion nebula', 'tarantula nebula', 'crab nebula',
+    'eagle nebula', 'lagoon nebula', 'ring nebula', 'helix nebula', 'butterfly nebula',
+    'horsehead nebula', 'veil nebula', 'rosette nebula', 'omega nebula', 'trifid nebula',
+    'bubble nebula', 'cone nebula', 'flaming star nebula', 'ghost nebula hubble',
+    // Famous Galaxies & Clusters
+    'whirlpool galaxy', 'sombrero galaxy', 'andromeda galaxy', 'triangulum galaxy',
+    'centaurus a', 'messier 81', 'messier 82', 'cartwheel galaxy', 'stephans quintet',
+    'spiral galaxy', 'barred spiral galaxy', 'interacting galaxies', 'hoags object',
+    'large magellanic cloud', 'small magellanic cloud', 'pinwheel galaxy', 'cigar galaxy',
+    // Deep Field, Lensing & Large Scale
+    'hubble deep field', 'webb deep field', 'cosmic cliffs', 'stellar nursery',
+    'globular cluster messier 13', 'pleiades', 'supernova remnant cas a', 'planetary nebula ngc',
+    'einstein ring gravitational lens', 'galaxy filament', 'protostellar disk',
+    // Solar System Wonders (Strictly High Res)
+    'jupiter great red spot', 'saturn rings high res', 'mars olympus mons', 'venus surface clouds',
+    'titan atmosphere', 'europa ice crust', 'enceladus plumes', 'neptune voyager high res',
+    'iotas planetary nebula', 'sun loop prominence', 'comet neowise tail',
+    // Earth Phenomenon (High Orbit)
+    'earth limb aurora', 'airglow atmospheric', 'cloud deck from space',
+    'sahara desert richat structure', 'amazon river from space', 'phytoplankton bloom space',
+    'moon shadow on earth eclipse', 'olympus mons mars high res'
   ];
   const keyword = customTopic || keywords[Math.floor(Math.random() * keywords.length)];
   const NASA_API_KEY = 'DEMO_KEY';
@@ -32,7 +42,7 @@ export const fetchSpaceImage = async (customTopic?: string, strictMode: boolean 
     'machine', 'machinery', 'robot', 'robotic', 'satellite', 'spacecraft', 'probe', 'rover', 'lander',
     'station', 'iss', 'telescope', 'shuttle', 'rocket', 'launch', 'vehicle', 'airplane', 'aircraft',
     'instrument', 'antenna', 'computer', 'console', 'laboratory', 'building', 'facility', 'center',
-    'meeting', 'conference', 'diagram', 'chart', 'graph', 'plot', 'blueprint',
+    'meeting', 'conference', 'diagram', 'chart', 'graph', 'plot', 'blueprint', 'logo', 'insignia',
     // Art Concepts
     'artist concept', 'illustration', 'artist\'s impression', 'animation', 'drawing', 'sketch'
   ];
@@ -160,41 +170,63 @@ export const fetchSpaceImage = async (customTopic?: string, strictMode: boolean 
 
     const assets: string[] = await assetResponse.json();
 
-    const isStandardImage = (url: string) => {
+    // GEOMETRIC IDENTITY PROTOCOL:
+    // Analysis and Display MUST share the same aspect ratio. 
+    // We prioritize using the exact same asset for both to ensure zero 'pipeline leakage'.
+    // We explicitly exclude '~thumb' as it is often a square crop of non-square imagery.
+    const isStandard = (url: string) => {
       const lower = url.toLowerCase();
-      // Exclude .tif or other heavy formats if present, prefer web-ready
-      return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png');
+      return (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png')) && !lower.includes('~thumb');
     };
 
-    // Stricter High-Res Priority: verify we actually get a decent size
-    // Prefer Large/Medium for web performance, only use Orig if others missing
-    const highResUrl = assets.find(url => url.includes('~large') && isStandardImage(url))
-      || assets.find(url => url.includes('~medium') && isStandardImage(url))
-      || assets.find(url => url.includes('~orig') && isStandardImage(url));
+    const highResUrl = assets.find(url => url.includes('~large') && isStandard(url))
+      || assets.find(url => url.includes('~orig') && isStandard(url))
+      || assets.find(url => url.includes('~medium') && isStandard(url));
 
-    const lowResUrl = assets.find(url => url.includes('~small') && isStandardImage(url))
-      || assets.find(url => url.includes('~thumb') && isStandardImage(url))
-      || assets.find(url => url.includes('~medium') && isStandardImage(url))
+    const analysisUrlCandidate = assets.find(url => url.includes('~medium') && isStandard(url))
+      || assets.find(url => url.includes('~small') && isStandard(url))
       || highResUrl;
 
-    if (!highResUrl) {
-      // If no medium/large/orig found, skip this item (treat as error to trigger fallback or retry in a real loop)
-      // For simple implementation, we throw to use global fallback, which we know is safe.
-      throw new Error("No high-resolution image asset found");
+    if (!highResUrl || !analysisUrlCandidate) {
+      throw new Error("No geometrically stable image assets found");
     }
 
-    const finalLowResUrl = lowResUrl || highResUrl;
+    const finalLowResUrl = analysisUrlCandidate;
 
-    if (!finalLowResUrl) {
-      throw new Error("No image assets found for this NASA item");
-    }
+    // UPSTREAM BOUNDS EXTRACTION:
+    // Extract implicit "Sidecar" metadata from description/keywords
+    const extractSidecar = (data: any, width: number = 2048, height: number = 2048): CelestialSidecar => {
+      const text = `${data.title} ${data.description || ''} ${(data.keywords || []).join(' ')}`.toLowerCase();
+
+      const raMatch = text.match(/ra\s*[:=]\s*([\d\.]+)/i);
+      const decMatch = text.match(/dec\s*[:=]\s*([+-]?[\d\.]+)/i);
+
+      return {
+        originalFormat: 'JPG',
+        source: 'NASA_IMAGE_LIBRARY',
+        protocolVersion: '1.0-GROUNDED',
+        envelope: {
+          xmin: 0,
+          ymin: 0,
+          xmax: width,
+          ymax: height,
+          crs: 'PIXEL',
+          centerRA: raMatch ? parseFloat(raMatch[1]) : undefined,
+          centerDec: decMatch ? parseFloat(decMatch[1]) : undefined
+        },
+        instrument: text.match(/(hubble|hst|webb|jwst|chandra|spitzer|wise)/i)?.[0] || 'Unknown',
+        fov: text.match(/fov\s*[:=]\s*([\d\.]+\s*(?:arcmin|arcsec|deg))/i)?.[0],
+        keywords: data.keywords || []
+      };
+    };
 
     return {
       url: highResUrl,
       analysisUrl: finalLowResUrl,
       title: itemData.title || "Unknown Stellar Object",
       description: itemData.description || "Captured by deep space observation arrays.",
-      date: itemData.date_created || new Date().toISOString()
+      date: itemData.date_created || new Date().toISOString(),
+      sidecar: extractSidecar(itemData)
     };
   } catch (error) {
     console.error("Error fetching NASA image:", error);
@@ -204,22 +236,32 @@ export const fetchSpaceImage = async (customTopic?: string, strictMode: boolean 
 };
 
 /**
- * Converts a remote NASA image to a base64 string for Gemini AI analysis.
+ * Converts a remote NASA image to a base64 string and returns its dimensions.
  */
-export const imageToBase64 = async (url: string): Promise<string> => {
+export const imageToBase64 = async (url: string): Promise<{ data: string, width: number, height: number }> => {
   const response = await fetch(url);
   const blob = await response.blob();
-  return new Promise((resolve, reject) => {
+  const data = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
       if (typeof reader.result === 'string') {
-        const base64String = reader.result.split(',')[1];
-        resolve(base64String);
+        resolve(reader.result.split(',')[1]);
       } else {
         reject("Base64 conversion failed");
       }
     };
     reader.onerror = () => reject("Image reading failed");
     reader.readAsDataURL(blob);
+  });
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({ data, width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      resolve({ data, width: 2048, height: 2048 });
+    };
+    img.src = `data:image/jpeg;base64,${data}`;
   });
 };

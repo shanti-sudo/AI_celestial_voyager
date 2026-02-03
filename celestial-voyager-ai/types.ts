@@ -24,12 +24,34 @@ export interface QuizQuestion {
   relatedPOI?: string; // Optional reference to POI name
 }
 
+export interface GeoEnvelope {
+  xmin: number; // Viewport Left (px or arbitrary)
+  ymin: number; // Viewport Top
+  xmax: number; // Viewport Right
+  ymax: number; // Viewport Bottom
+  crs: 'WCS' | 'EQ_RECT' | 'PIXEL'; // Coordinate Reference System
+  centerRA?: number; // Decimal degrees
+  centerDec?: number; // Decimal degrees
+  pixelScale?: number; // arcsec/pixel
+}
+
+export interface CelestialSidecar {
+  originalFormat: string;
+  source: string;
+  envelope: GeoEnvelope;
+  instrument?: string;
+  fov?: string;
+  keywords?: string[];
+  protocolVersion: '1.0-GROUNDED';
+}
+
 export interface NASAImage {
   url: string;
-  analysisUrl: string; // Low-res version for faster AI processing
+  analysisUrl: string;
   title: string;
   description: string;
   date: string;
+  sidecar?: CelestialSidecar;
 }
 
 export interface GameState {

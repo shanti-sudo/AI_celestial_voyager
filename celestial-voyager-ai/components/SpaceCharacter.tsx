@@ -8,16 +8,20 @@ interface Props {
   isThrusting: boolean;
   isBraking: boolean;
   turnDirection: number; // -1, 0, 1
+  pixelX?: number;
+  pixelY?: number;
 }
 
-const SpaceCharacter: React.FC<Props> = ({ x, y, rotation, isThrusting, isBraking, turnDirection }) => {
+const SpaceCharacter: React.FC<Props> = ({ x, y, rotation, isThrusting, isBraking, turnDirection, pixelX, pixelY }) => {
   return (
     <div
       className="absolute transition-transform duration-75 z-50 pointer-events-none"
       style={{
-        left: `${x}%`,
-        top: `${y}%`,
-        transform: `translate(-50%, -50%) rotate(${rotation}deg)`
+        left: pixelX !== undefined ? `${pixelX}px` : `${x}%`,
+        top: pixelY !== undefined ? `${pixelY}px` : `${y}%`,
+        transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+        transformOrigin: 'center center',
+        imageRendering: 'pixelated'
       }}
     >
       <div className="relative">

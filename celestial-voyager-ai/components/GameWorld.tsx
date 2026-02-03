@@ -42,7 +42,42 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
 
   // Responsive Alignment States
   const [imageSize, setImageSize] = useState({ width: 1920, height: 1080 }); // Default fallback
+  const [renderedSize, setRenderedSize] = useState({ width: 0, height: 0 });
+  const [snappedSize, setSnappedSize] = useState({ width: 0, height: 0 });
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+
+  const imageRef = useRef<HTMLImageElement>(null);
+
+  // Device Pixel Snapping Logic
+  const snap = (n: number) => {
+    const dpr = window.devicePixelRatio || 1;
+    return Math.round(n * dpr) / dpr;
+  };
+
+  // Track rendered image dimensions for pixel-perfect anchoring
+  useEffect(() => {
+    if (!imageRef.current) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === imageRef.current) {
+          const width = entry.contentRect.width;
+          const height = entry.contentRect.height;
+
+          setRenderedSize({ width, height });
+
+          // Medical Imaging Snap: Force the dimensions to the hardware device grid
+          setSnappedSize({
+            width: snap(width),
+            height: snap(height)
+          });
+        }
+      }
+    });
+
+    observer.observe(imageRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   // Audio Component: Synthesized "Ping" for interaction feedback
   const playPing = useCallback((freq = 880, type: OscillatorType = 'sine', duration = 0.15) => {
@@ -110,7 +145,7 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
       let nextX = prev.posX + vx;
       let nextY = prev.posY + vy;
 
-      const buffer = 12;
+      const buffer = 5;
       if (nextX < buffer) { nextX = buffer; vx = 0; }
       if (nextX > 100 - buffer) { nextX = 100 - buffer; vx = 0; }
       if (nextY < buffer) { nextY = buffer; vy = 0; }
@@ -121,23 +156,31 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
 
       // If we have an active POI, check if we've moved far enough away to close it
       if (activePOI) {
-        // Nano Banana Pro: Sub-pixel precision check
-        const poiX = activePOI.hard_anchor ? (activePOI.hard_anchor.pixelX / activePOI.hard_anchor.originalImageWidth) * 100 : activePOI.x;
-        const poiY = activePOI.hard_anchor ? (activePOI.hard_anchor.pixelY / activePOI.hard_anchor.originalImageHeight) * 100 : activePOI.y;
-        const dist = Math.sqrt(Math.pow(poiX - nextX, 2) + Math.pow(poiY - nextY, 2));
-        if (dist > EXIT_RADIUS) {
+        // Use pixel-relative distance for circular interaction regardless of aspect ratio
+        const dxPx = ((activePOI.x - nextX) / 100) * snappedSize.width;
+        const dyPx = ((activePOI.y - nextY) / 100) * snappedSize.height;
+        const distPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
+
+        // INTERACTION_RADIUS is in percentage relative to viewport height or width?
+        // Let's use a fixed pixel threshold for consistent "feel"
+        const interactionThresholdPx = (INTERACTION_RADIUS / 100) * Math.min(snappedSize.width, snappedSize.height);
+        const exitThresholdPx = (EXIT_RADIUS / 100) * Math.min(snappedSize.width, snappedSize.height);
+
+        if (distPx > exitThresholdPx) {
           activePOI = null;
         }
       }
 
       // If no POI is active (or we just closed one), check for new collisions
       if (!activePOI) {
+        const interactionThresholdPx = (INTERACTION_RADIUS / 100) * Math.min(snappedSize.width, snappedSize.height);
+
         for (const poi of validPoints) {
-          // Snap collision to absolute pixel-derived centroids
-          const poiX = poi.hard_anchor ? (poi.hard_anchor.pixelX / poi.hard_anchor.originalImageWidth) * 100 : poi.x;
-          const poiY = poi.hard_anchor ? (poi.hard_anchor.pixelY / poi.hard_anchor.originalImageHeight) * 100 : poi.y;
-          const dist = Math.sqrt(Math.pow(poiX - nextX, 2) + Math.pow(poiY - nextY, 2));
-          if (dist < INTERACTION_RADIUS) {
+          const dxPx = ((poi.x - nextX) / 100) * snappedSize.width;
+          const dyPx = ((poi.y - nextY) / 100) * snappedSize.height;
+          const distPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
+
+          if (distPx < interactionThresholdPx) {
             activePOI = poi;
             // Mark POI as explored
             setExploredPOIs(prevExplored => {
@@ -165,7 +208,7 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
         activePOI: activePOI
       };
     });
-  }, [validPoints]);
+  }, [validPoints, snappedSize]); // RELIANCE ON SNAPPED SIZE FIXED
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => keysPressed.current.add(e.key);
@@ -272,79 +315,87 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
       {/* Skybox / State-Aware Background */}
       {/* Parallax Container: Moves opposite to player position to create depth */}
       <div
-        className="absolute transition-transform duration-75 ease-linear will-change-transform flex items-center justify-center overflow-hidden"
+        className="absolute transition-transform duration-700 ease-out will-change-transform flex items-center justify-center overflow-hidden"
         style={{
-          // Parallax inset logic - we make it slightly larger than 100% to allow wiggle
-          // But we align it to the center
           width: '100%',
           height: '100%',
           left: '0%',
           top: '0%',
-          // Slightly reduced parallax movement to fit safely within bounds
-          transform: `translate(${(50 - gameState.posX) * 0.05}%, ${(50 - gameState.posY) * 0.05}%)`
+          // Combined Visual Stack: Parallax and Zoom applied ONCE at the top wrapper to ensure coordinate locking.
+          transform: `translate3d(${(50 - gameState.posX) * 0.0005 * windowSize.width}px, ${(50 - gameState.posY) * 0.0005 * windowSize.height}px, 0) scale(${1 + (gameState.activePOI ? 0.05 : 0)})`,
+          transformOrigin: 'top left', // RIGID GROUNDING: Force top-left origin
+          imageRendering: 'pixelated', // RIGID GROUNDING: Bypass scaling anti-aliasing
+          contain: 'layout paint'
         }}
       >
-        {/* Aspect-Ratio-Aware Container: Automatically matches image scaling */}
+        {/* Aspect-Ratio-Aware Container: Layout only, no transforms here to avoid rounding drift. */}
+        {/* RIGID GROUNDING: POI placement must be performed in the same coordinate space and resolution 
+            as the final rendered raster, with no intermediate scaling, cropping, rotation, or aspect adjustment. */}
         <div
-          className="relative shadow-2xl flex-none transition-transform duration-700 ease-out"
+          className="relative shadow-2xl flex-none overflow-hidden"
           style={{
-            // Contain Logic: Ensure image fits fully on screen without overflow? 
-            // USER REQUEST: "image extending beyond screen". 
-            // This usually implies they see scrollbars or the ship goes "off canvas".
-            // We switch to "Contain" mode: The image will be fully visible, letterboxed if needed, but NEVER clipped.
-            maxWidth: '100%',
-            maxHeight: '100%',
-            aspectRatio: `${imageSize.width} / ${imageSize.height}`,
-
-            width: '100%',     // Attempt to fill width
-            height: 'auto',    // But respect aspect
-            margin: 'auto',    // Center it
-
-            // Apply Zoom at the Container Level so BG and Markers scale together
-            transform: `scale(${1 + (gameState.activePOI ? 0.05 : 0)})`
+            width: `${snappedSize.width}px`,
+            height: `${snappedSize.height}px`,
+            position: 'relative',
+            margin: '0',
+            padding: '0',
+            // If snappedSize is 0 (first mount), we use aspect-ratio as fallback
+            ...(snappedSize.width === 0 ? {
+              maxWidth: '100%',
+              maxHeight: '100%',
+              aspectRatio: `${imageSize.width} / ${imageSize.height}`,
+              width: '100%',
+              height: 'auto'
+            } : {})
           }}
         >
-          {/* Image Layer */}
-          <div
-            className="w-full h-full transition-all duration-700 ease-out"
+          <img
+            ref={imageRef}
+            src={image.url}
+            className="block select-none m-0 p-0"
             style={{
-              backgroundImage: `url(${image.url})`,
-              backgroundSize: '100% 100%',
-              backgroundPosition: '0 0',
+              width: '100%',
+              height: '100%',
+              objectFit: 'fill', // Force-align pixels to the snapped container manifest
+              imageRendering: 'pixelated',
               filter: gameState.activePOI ? 'brightness(1.1) contrast(1.15)' : 'brightness(1) contrast(1)',
-              imageRendering: 'pixelated', // Protocol: Pixel-Perfect Grounding
-              transformOrigin: 'top left',
+              transition: 'filter 0.7s ease-out'
             }}
+            draggable={false}
           />
 
           {/* POI Markers and Tooltips - Now perfectly aligned in image space */}
           {validPoints.map(poi => {
             const isNearby = gameState.activePOI?.id === poi.id;
 
-            // BYPASS PROJECT COORDINATE SYSTEM:
-            // Using Raw Pixel Space (x, y) relative to top-left corner (0,0).
-            // This ensures zero spatial projection or scaling offsets from the source buffer.
-            const displayX = poi.hard_anchor
-              ? (poi.hard_anchor.pixelX / poi.hard_anchor.originalImageWidth) * 100
-              : poi.x;
-            const displayY = poi.hard_anchor
-              ? (poi.hard_anchor.pixelY / poi.hard_anchor.originalImageHeight) * 100
-              : poi.y;
+            // PIXEL-PERFECT GROUNDING PROTOCOL:
+            // 1. Calculate absolute display pixels from source percentage.
+            // 2. Use 'snappedSize' as the authoritative Render Image Space.
+            // 3. Keep accuracy within 0.1px.
+            const xPx = (poi.x / 100) * snappedSize.width;
+            const yPx = (poi.y / 100) * snappedSize.height;
 
-            // Tooltip Positioning based on Pixel Space coordinates
-            const isFlippedY = displayY > 50;
-            const isFlippedX = displayX > 50;
+            const POI_SIZE = 40; // matches w-10 h-10 (40px)
+            const OFFSET = POI_SIZE / 2;
+
+            const isFlippedY = poi.y > 50;
+            const isFlippedX = poi.x > 50;
 
             return (
               <React.Fragment key={poi.id}>
+                {/* Overlay Space: Marker */}
                 <div
-                  className="absolute flex items-center justify-center transition-all duration-500 z-40 will-change-transform"
+                  className="absolute flex items-center justify-center transition-all duration-500 z-40 will-change-transform w-10 h-10"
                   style={{
-                    left: `${displayX}%`,
-                    top: `${displayY}%`,
-                    // Using translate3d for sub-pixel hardware rendering acceleration
-                    transform: `translate3d(-50%, -50%, 0) ${isNearby ? 'scale(1.2)' : 'scale(1)'}`,
-                    opacity: isNearby ? 1 : 0.5
+                    position: 'absolute',
+                    left: `${xPx - OFFSET}px`,
+                    top: `${yPx - OFFSET}px`,
+                    // Using translate3d(0,0,0) with sub-pixel values for high precision
+                    transform: `translate3d(0, 0, 0) ${isNearby ? 'scale(1.2)' : 'scale(1)'}`,
+                    opacity: isNearby ? 1 : 0.5,
+                    willChange: 'transform',
+                    pointerEvents: 'auto',
+                    transformOrigin: 'center center'
                   }}
                 >
                   <div className={`w-10 h-10 rounded-full border-[3px] transition-all duration-500 ${isNearby
@@ -366,18 +417,18 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
                   </div>
                 </div>
 
-                {/* Inline Tooltip: Anchored to POI coordinate */}
+                {/* Overlay Space: Tooltip (Anchored to exact display pixel) */}
                 {isNearby && (
                   <div
                     className="absolute z-[100] p-5 bg-slate-950/90 border-l-4 border-cyan-500 backdrop-blur-2xl rounded shadow-2xl w-80 overflow-y-auto scrollbar-thin scrollbar-thumb-cyan-500/30 scrollbar-track-transparent transition-all duration-500 animate-in fade-in zoom-in-95"
                     style={{
-                      left: `${displayX}%`,
-                      top: `${displayY}%`,
-                      // Smart Positioning: Offset from center of POI
-                      // Constrain max-height based on which side it's on to prevent screen overflow
+                      left: `${xPx}px`,
+                      top: `${yPx}px`,
+                      // Smart Positioning: Absolute Pixel Offset to prevent drift
                       transform: `translate(${isFlippedX ? 'calc(-100% - 35px)' : '35px'}, ${isFlippedY ? 'calc(-100% + 20px)' : 'calc(20px)'})`,
-                      maxHeight: isFlippedY ? `calc(${displayY}% - 5%)` : `calc(95% - ${displayY}%)`,
-                      maxWidth: isFlippedX ? `${displayX}vw` : `${100 - displayX}vw`
+                      maxHeight: isFlippedY ? `${yPx - 20}px` : `${snappedSize.height - yPx - 20}px`,
+                      maxWidth: isFlippedX ? `${xPx - 20}px` : `${snappedSize.width - xPx - 20}px`,
+                      pointerEvents: 'auto'
                     }}
                   >
                     <div className="flex items-center justify-between mb-3">
@@ -453,6 +504,8 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
           <SpaceCharacter
             x={gameState.posX}
             y={gameState.posY}
+            pixelX={(gameState.posX / 100) * snappedSize.width}
+            pixelY={(gameState.posY / 100) * snappedSize.height}
             rotation={rotation}
             isThrusting={keysPressed.current.size > 0}
             isBraking={keysPressed.current.size === 0 && (Math.abs(gameState.velocity.x) > 0.01 || Math.abs(gameState.velocity.y) > 0.01)}
