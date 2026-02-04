@@ -8,7 +8,7 @@
 ---
 
 ## 🌌 Context
-**Celestial Voyager AI** is an advanced interactive space exploration platform that transforms high-resolution NASA imagery into traversable mission sectors. By integrating the **Gemini 2.0 Flash** model with the **NASA Image and Video Library API**, the system performs real-time forensic scans of celestial bodies to identify and ground Points of Interest (POIs) with sub-pixel fidelity.
+**Celestial Voyager AI** is an advanced interactive space exploration platform that transforms high-resolution NASA imagery into traversable mission sectors. By integrating the **Gemini 3 Pro Preview** model with the **NASA Image and Video Library API**, the system performs real-time forensic scans of celestial bodies to identify and ground Points of Interest (POIs) with sub-pixel fidelity.
 
 Traditional mapping systems often suffer from "UI Drift" where labels become detached from their associated visual centroids during viewport scaling. Celestial Voyager solves this by implementing a **Raster-Plane Grounding** architecture, ensuring every discovery remain mathematically locked to the source raster buffer.
 
@@ -16,7 +16,7 @@ Traditional mapping systems often suffer from "UI Drift" where labels become det
 - **Core Framework**: [React 19](https://react.dev/)
 - **Build Engine**: [Vite 6](https://vitejs.dev/)
 - **Language**: [TypeScript](https://www.typescriptlang.org/) (Strict Mode)
-- **AI Engine**: [@google/genai](https://www.npmjs.com/package/@google/genai) (Gemini 2.0 Integration)
+- **AI Engine**: [@google/genai](https://www.npmjs.com/package/@google/genai) (Gemini 3 Pro Integration)
 - **Imagery Provider**: [NASA API](https://api.nasa.gov/)
 - **Styling**: Vanilla CSS with Tailwind-tier utility efficiency for glassmorphic UI.
 
@@ -64,13 +64,17 @@ const calculateIWC = (pixels: number[]) => {
 };
 ```
 
-### 🛰️ Dynamic Mission Analysis
-The system automatically executes a Forensic Deep Scan whenever a new mission sector is targeted.
+### 🛰️ Multi-Source Dynamic Analysis
+The system automatically executes a **Deep Scan** whenever a new mission sector is targeted. It aggregates data from:
+- **NASA Metadata Archive**: Real-time EXIF/IPTC retrieval for official mission records.
+- **Onboard AI (Gemini 3 Pro)**: High-fidelity scientific synthesis when archival telemetry is unavailable.
 
-```typescript
-const points = await analyzeSpaceImage(base64Image, imageTitle, imageDescription);
-// Results are grounded to Raw Pixel Space relative to top-left (0,0)
-```
+### 🛡️ Safety & Stability Protocols
+- **Emergency Navigation**: In the event that strict AI filtering (Pure Celestial Protocol) rejects all available targets, the system invokes an emergency navigation protocol to inject safe, verified mission coordinates.
+- **Geometric Identity Protocol**: Ensures the analysis asset and the display asset share identical aspect ratios and raster dimensions to prevent coordinate "pipeline leakage" during POI placement.
+
+### 🎓 Knowledge Assessment
+The platform features an automated **Quiz Engine** that generates contextual multiple-choice questions based on the explored Points of Interest. This ensures that exploration is paired with scientific learning and telemetry verification.
 
 ## 🤝 Contribution
 1. **Fork** the repository.

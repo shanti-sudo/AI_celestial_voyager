@@ -1,6 +1,6 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { POI, QuizQuestion, NASAImage } from "../types";
+import { WCSParams, pixelToRADec } from "./wcsService";
 
 export interface MissionOption {
   id: string;
@@ -10,7 +10,7 @@ export interface MissionOption {
   type: 'DEEP_SPACE' | 'EARTH' | 'TRENDING';
 }
 
-export const analyzeSpaceImage = async (base64Image: string, image: NASAImage): Promise<POI[]> => {
+export const analyzeSpaceImage = async (base64Image: string, image: NASAImage, wcs?: WCSParams): Promise<POI[]> => {
   const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
 
   if (!apiKey || apiKey === 'DEMO_KEY') {
@@ -24,21 +24,19 @@ export const analyzeSpaceImage = async (base64Image: string, image: NASAImage): 
   const prompt = `Role: You are an expert Astronomer and Visual Grounding Agent.
   Objective: Analyze the NASA space image "${image.title}" to detect POIs with absolute geometric rigidity.
   
-  IMPORTANT COORDINATE RULES:
-  - Treat the image exactly as you see it.
-  - Ignore any original file resolution or metadata.
-  - All coordinates must be computed relative to the visible image content only.
-
+  PIXEL-PERFECT GROUNDING PROTOCOL:
+  1. Use "Nano Banana Pro" logic to identify the exact 'Blob' center of each feature.
+  2. Perform a "Gaussian-fit" or "Center-of-Gravity (CoG)" calculation to refine the visual anchor.
+  3. Coordinates must be derived from raw raster data, NOT inferred from context.
   
-  COORDINATE SYSTEM:
-  - Use normalized percentages from 0.00 to 100.00.
-  - (0.00, 0.00) is the strict TOP-LEFT corner.
-  - (100.00, 100.00) is the strict BOTTOM-RIGHT corner.
-  - Coordinates must be linearly mapped across the visible image content (no padding).
+  IMPORTANT COORDINATE RULES (STRICT RASTER MAPPING):
+  - (0.00, 0.00) is the absolute TOP-LEFT edge of the image buffer (the very first pixel).
+  - (100.00, 100.00) is the absolute BOTTOM-RIGHT edge of the image buffer (the very last pixel).
+  - There is ZERO margin or padding in this coordinate space.
+  - Linear mapping only.
   
-  CALIBRATION TASK (REQUIRED):
-  First, define the four corners of your coordinate system (0,0 to 100,100).
-  If a corner is not visually distinct, estimate its position as the extreme visible edge.
+  CALIBRATION TASK:
+  Confirm the extreme visible edges (0.00,0.00 to 100.00,100.00).
   1. Top-left corner: {x: 0.00, y: 0.00}
   2. Top-right corner: {x: 100.00, y: 0.00}
   3. Bottom-left corner: {x: 0.00, y: 100.00}
@@ -46,21 +44,19 @@ export const analyzeSpaceImage = async (base64Image: string, image: NASAImage): 
   
   FEATURE DETECTION TASK:
   Identify 3 to 8 meaningful astronomical features. For each feature, provide:
-  - Exact center (x, y) in the 0.00-100.00 space.
+  - Refined anchor (x, y) in the 0.00-100.00 absolute raster space.
   - A descriptive name.
   - A multi-part description where EACH section ("The Physics:", "The Story:", "The Proof:") begins on a NEW LINE.
-  - A thoughtSignature explaining your grounding logic (e.g. "Grounding: Visual Raster (Non-Geospatial)").
+  - A thoughtSignature explaining your grounding logic (e.g. "Gaussian Fit Centroiding locked on NIR blob").
   - A specific classification type ('nebula', 'galaxy', 'star', 'planet', 'other').
   - Detection confidence (0.0-1.0).
   
   OUTPUT FORMAT (STRICT JSON):
-  - Return a single JSON object.
-  - Include 'calibration' object with the four corner anchors.
-  - Include 'pois' array of objects.`;
+  - Return a single JSON object with 'calibration' and 'pois'.`;
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3-pro-preview",
       contents: [
         {
           parts: [
@@ -142,12 +138,31 @@ export const analyzeSpaceImage = async (base64Image: string, image: NASAImage): 
       const driftY = Math.abs(calib.top_left.y) + Math.abs(100 - calib.bottom_left.y);
       const totalDrift = (driftX + driftY).toFixed(2);
 
+      let ra: number | undefined;
+      let dec: number | undefined;
+
+      if (wcs) {
+        // Calculate RA/Dec for the POI center
+        // Note: we use the corrected percentage and assume the analysis image matches the WCS frame (usually it's a direct crop)
+        const coords = pixelToRADec(
+          (correctedX / 100) * sourceWidth,
+          (correctedY / 100) * sourceHeight,
+          sourceWidth,
+          sourceHeight,
+          wcs
+        );
+        ra = coords.ra;
+        dec = coords.dec;
+      }
+
       const poi: POI = {
         id: p.id,
         name: p.name,
         description: p.description,
         x: correctedX,
         y: correctedY,
+        ra,
+        dec,
         hard_anchor: {
           pixelX: (correctedX / 100) * sourceWidth,
           pixelY: (correctedY / 100) * sourceHeight,
@@ -155,8 +170,8 @@ export const analyzeSpaceImage = async (base64Image: string, image: NASAImage): 
           originalImageHeight: sourceHeight
         },
         type: p.type,
-        thoughtSignature: `${p.thoughtSignature} | Grounding Stability: ${100 - parseFloat(totalDrift)}% | Conf: ${Math.round((p.confidence || 0.95) * 100)}%`,
-        registrationStatus: 'SYNCED'
+        thoughtSignature: p.thoughtSignature,
+        registrationStatus: wcs ? 'SYNCED' : 'ADJUSTED'
       };
 
       return poi;
@@ -228,12 +243,27 @@ export const generateQuiz = async (exploredPOIs: POI[]): Promise<QuizQuestion[]>
   const questionCount = Math.min(5, Math.max(1, exploredPOIs.length));
   const ai = new GoogleGenAI({ apiKey });
   const poiContext = exploredPOIs.map(poi => `${poi.name}: ${poi.description}`).join('\n\n');
-  const prompt = `Based on these explored objects: ${poiContext}, generate ${questionCount} MCQs with 4 options. Return JSON with question, options[], correctAnswer(index), relatedPOI.`;
+  const prompt = `Based on these explored objects: ${poiContext}, generate ${questionCount} MCQs with 4 options. Return JSON with quiz items.`;
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3-pro-preview",
       contents: [{ parts: [{ text: prompt }] }],
-      config: { responseMimeType: "application/json" }
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              question: { type: Type.STRING },
+              options: { type: Type.ARRAY, items: { type: Type.STRING } },
+              correctAnswer: { type: Type.NUMBER, description: "Index of the correct answer (0-3)" },
+              relatedPOI: { type: Type.STRING }
+            },
+            required: ["question", "options", "correctAnswer"]
+          }
+        }
+      }
     });
     return JSON.parse(response.text).slice(0, questionCount);
   } catch (error) {
@@ -250,20 +280,21 @@ export const generateMissionOptions = async (excludeTopics: string[] = []): Prom
     { id: '3', topic: 'James Webb', title: 'JWST Discovery', description: 'Webb telescope discoveries.', type: 'TRENDING' }
   ];
   const ai = new GoogleGenAI({ apiKey });
-  const excludeText = excludeTopics.length > 0 ? `\n  - DO NOT include these topics: ${excludeTopics.join(', ')}` : '';
+  const excludeText = excludeTopics.length > 0 ? `\n  - STRICT EXCLUSION: DO NOT include ANY of these previously visited topics: ${excludeTopics.join(', ')}` : '';
   const prompt = `Generate 3 distinct, high-interest space mission targets. 
   CRITICAL RULES:
-  - DO NOT REPEAT common targets unless they offer unique phenomena.
-  - VARY the targets across different classifications (e.g., a specific Galaxy, a specific Planetary Nebula, and a Lunar/Earth event).${excludeText}
-  - SELECT from famous NASA-cataloged objects (NGC, Messier, IC catalogs).
+  - PRIORITIZE famous or trending images from the James Webb Space Telescope (JWST) and European Space Agency (ESA).
+  - FOCUS on iconic targets like the Pillars of Creation, Carina Nebula, Stephan's Quintet, or other Webb Early Release Observations.${excludeText}
+  - VARY the targets across different classifications (e.g., a Deep Space Galaxy, an ESA-monitored Earth phenomenon, and a JWST-trending Nebula).
+  - SELECT from famous catalogs (NGC, Messier, IC).
   - NO human beings, body parts, or astronaut suits.
   - NO NASA logos or agency insignias.
-  - NO conference, meeting, or professional facility themes.
+  - NO conference or professional facility themes.
   - Pure astronomical objects ONLY.
   Return JSON array of objects with id, topic(short keyword for search), title, description, type (DEEP_SPACE | EARTH | TRENDING).`;
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3-pro-preview",
       contents: [{ parts: [{ text: prompt }] }],
       config: { responseMimeType: "application/json" }
     });
@@ -277,17 +308,20 @@ export const validateImageContent = async (base64Image: string): Promise<boolean
   const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'DEMO_KEY') return true;
   const ai = new GoogleGenAI({ apiKey });
-  const prompt = `CRITICAL VALIDATION: Check the image for any of the following:
-  1. Human beings (full person, faces, or any body parts like hands, eyes, etc).
-  2. NASA logos or any agency insignias.
-  3. Humans in a professional setting (meetings, conferences, press releases).
-  4. Text-heavy overlays or diagrams.
+  const prompt = `CRITICAL VALIDATION: You are a strict filter for celestial imagery. Analyze this image for ANY trace of human or mechanical presence.
+  
+  SET SAFE TO FALSE IF YOU DETECT:
+  1. Any human beings (full person, portions of people, or distinct biological features like skin, faces, hands).
+  2. Any human artifacts: NASA/ESA logos, insignias, text overlays, or watermarks.
+  3. Any terrestrial environments: Laboratories, rooms, clean rooms, control centers, auditoriums, or hallways.
+  4. Any engineered objects: Machines, telescopes, microscopes, computers, or scientific benches on Earth.
+  5. Any diagrams, slides, or technical charts.
   
   Return JSON: { "safe": boolean, "reason": "string" }
-  Set "safe" to false if ANY of the above are detected. Reason must be descriptive.`;
+  Be extremely aggressive. If you're 5% unsure, set "safe" to false.`;
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3-pro-preview",
       contents: [{ parts: [{ text: prompt }, { inlineData: { data: base64Image, mimeType: "image/jpeg" } }] }]
     });
     const result = JSON.parse(response.text);

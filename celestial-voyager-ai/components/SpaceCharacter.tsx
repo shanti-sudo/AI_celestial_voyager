@@ -15,16 +15,23 @@ interface Props {
 const SpaceCharacter: React.FC<Props> = ({ x, y, rotation, isThrusting, isBraking, turnDirection, pixelX, pixelY }) => {
   return (
     <div
-      className="absolute transition-transform duration-75 z-50 pointer-events-none"
+      className="absolute z-50 pointer-events-none"
       style={{
         left: pixelX !== undefined ? `${pixelX}px` : `${x}%`,
         top: pixelY !== undefined ? `${pixelY}px` : `${y}%`,
-        transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
+        transform: 'translate(-50%, -50%)',
         transformOrigin: 'center center',
         imageRendering: 'pixelated'
       }}
     >
-      <div className="relative">
+      <div
+        className="relative"
+        style={{
+          transform: `rotate(${rotation}deg)`,
+          transition: 'transform 0.1s linear', // Only smooth rotation
+          transformOrigin: 'center center'
+        }}
+      >
         <style>
           {`
             @keyframes ignition-pulse {

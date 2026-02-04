@@ -12,6 +12,8 @@ export interface POI {
     originalImageHeight: number;
   };
   type: 'star' | 'nebula' | 'galaxy' | 'planet' | 'other';
+  ra?: number; // Right Ascension (Decimal Degrees)
+  dec?: number; // Declination (Decimal Degrees)
   thoughtSignature?: string; // AI reasoning/triangulation data
   registrationStatus?: string; // Tracks 'SYNCED' or 'ADJUSTED' after Image Registration
   explored?: boolean; // Track if POI has been visited
@@ -43,11 +45,30 @@ export interface CelestialSidecar {
   fov?: string;
   keywords?: string[];
   protocolVersion: '1.0-GROUNDED';
+  wcs?: {
+    crval1: number;
+    crval2: number;
+    crpix1: number;
+    crpix2: number;
+    cdelt1: number;
+    cdelt2: number;
+    ctype1: string;
+    ctype2: string;
+    pc1_1?: number;
+    pc1_2?: number;
+    pc2_1?: number;
+    pc2_2?: number;
+    naxis1: number;
+    naxis2: number;
+  };
 }
 
 export interface NASAImage {
   url: string;
   analysisUrl: string;
+  videoUrl?: string; // 4K .mp4 manifest
+  metadataUrl?: string; // Point to scientific metadata.json
+  nasaId: string;
   title: string;
   description: string;
   date: string;
@@ -59,4 +80,18 @@ export interface GameState {
   posY: number;
   velocity: { x: number; y: number };
   activePOI: POI | null;
+}
+
+export interface JWSTScientificData {
+  id: string;
+  title: string;
+  description: string;
+  altText?: string;
+  keywords: string[];
+  sources: {
+    type: 'NASA_METADATA' | 'ESA_API' | 'JWST_API' | 'AI_FALLBACK';
+    description: string;
+    credit: string;
+    keywords: string[];
+  }[];
 }

@@ -1,11 +1,15 @@
 
 import React, { useState, useEffect } from 'react';
-import { fetchSpaceImage, imageToBase64 } from './services/nasaService';
+import { fetchSpaceImage, imageToBase64, fetchHighFidelitySpaceAsset } from './services/nasaService';
 import { analyzeSpaceImage, generateMissionOptions, validateImageContent, MissionOption } from './services/geminiService';
 import { validateGroundingManifest } from './services/groundingValidator';
 import GameWorld from './components/GameWorld';
 import MissionSelector from './components/MissionSelector';
 import { NASAImage, POI } from './types';
+import { getWCSForNasaId } from './services/mastService';
+import { JWSTScientificData } from './types';
+import { fetchResearchData } from './services/researchService';
+import DeepScanArtifact from './components/DeepScanArtifact';
 
 const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -22,6 +26,8 @@ const App: React.FC = () => {
   const [missionOptions, setMissionOptions] = useState<MissionOption[]>([]);
   const [isFetchingOptions, setIsFetchingOptions] = useState(false);
   const [isSectorComplete, setIsSectorComplete] = useState(false);
+  const [showDeepScan, setShowDeepScan] = useState(false);
+  const [deepScanData, setDeepScanData] = useState<JWSTScientificData | null>(null);
 
   // Guard against duplicate initialization and handle unmounting
   const isInitializing = React.useRef(false);
@@ -122,7 +128,9 @@ const App: React.FC = () => {
               const isValid = await validateImageContent(b64);
               if (!isValid) {
                 console.warn(`Mission option '${opt.topic}' failed Sentry validation. Removing from selectable list.`);
-                // We keep it in the options list for now but mark it error to prevent selection or filter it out
+
+                // Immediately remove this option from the UI
+                setMissionOptions(currentOptions => currentOptions.filter(o => o.id !== opt.id));
                 setPrefetchedState(prev => ({ ...prev, [opt.id]: 'error' }));
                 return;
               }
@@ -185,24 +193,24 @@ const App: React.FC = () => {
       }
       setLoadingProgress(15);
 
-      let nasaImg: NASAImage;
-      if (missionId_key && prefetchedImages.current[missionId_key]) {
-        nasaImg = prefetchedImages.current[missionId_key];
-      } else {
-        nasaImg = await fetchSpaceImage(specificTopic);
-      }
-
-      // Add to history to avoid repetition
-      if (nasaImg.title) {
-        missionHistory.current = [...new Set([...missionHistory.current, nasaImg.title, specificTopic || ''])].filter(Boolean);
-      }
+      // 1. Fetch metadata (fastest)
+      const nasaImg = missionId_key && prefetchedImages.current[missionId_key]
+        ? prefetchedImages.current[missionId_key]
+        : (specificTopic ? await fetchHighFidelitySpaceAsset(specificTopic) : await fetchSpaceImage());
 
       if (!isMounted.current) return;
 
-      setLoadingProgress(45);
-      const { data: base64, width, height } = await imageToBase64(nasaImg.analysisUrl);
+      // 2. Start WCS fetch in background - DO NOT AWAIT YET
+      const wcsPromise = nasaImg.nasaId ? getWCSForNasaId(nasaImg.nasaId) : Promise.resolve(null);
 
-      // Update the sidecar with REAL dimensions once we have them from the analysis image
+      // 3. Process Image and start AI Analysis
+      setLoadingProgress(30);
+      setLoadingStep('Synchronizing Systems...');
+
+      const base64Result = await imageToBase64(nasaImg.analysisUrl);
+      const { data: base64, width, height } = base64Result;
+
+      // Update the sidecar with REAL dimensions
       if (nasaImg.sidecar) {
         nasaImg.sidecar.envelope.xmax = width;
         nasaImg.sidecar.envelope.ymax = height;
@@ -210,16 +218,29 @@ const App: React.FC = () => {
 
       if (!isMounted.current) return;
 
-      // 2.5 AI Sentry Validation
-      // We validate ALL images that aren't already AI-verified (pre-fetched ones aren't strictly validated by Sentry yet)
+      // 4. Run AI Analysis and WCS Fetch in parallel
       const isAlreadyVerified = missionId_key && prefetchedPoints.current[missionId_key];
-      if (!isAlreadyVerified) {
-        setLoadingStep(getFlavorText());
-        setLoadingProgress(60);
-        const isValid = await validateImageContent(base64);
+      let analyzedPoints: POI[];
+
+      if (isAlreadyVerified) {
+        analyzedPoints = prefetchedPoints.current[missionId_key];
+        // Ensure WCS is finished anyway for consistency
+        await wcsPromise;
+        setLoadingProgress(90);
+      } else {
+        setLoadingStep('Performing Neural Analysis...');
+        setLoadingProgress(50);
+
+        // This is the big parallel block: AI Validation + AI Analysis + WCS Sync
+        const [validationResult, aiPoints, wcsData] = await Promise.all([
+          validateImageContent(base64),
+          analyzeSpaceImage(base64, nasaImg), // Call without WCS for now to speed up start
+          wcsPromise
+        ]);
+
         if (!isMounted.current) return;
 
-        if (!isValid) {
+        if (!validationResult) {
           console.warn('Image rejected by Sentry. Retrying jump...');
           setLoadingStep('Contamination Detected. Re-routing...');
           isInitializing.current = false;
@@ -227,7 +248,18 @@ const App: React.FC = () => {
           return;
         }
 
-        // 2.6 Geometric Grounding Validation (Anti-Leakage)
+        // Apply WCS mapping to AI points after both are ready
+        if (wcsData) {
+          const { pixelToRADec } = await import('./services/wcsService');
+          aiPoints.forEach(p => {
+            const coords = pixelToRADec(p.hard_anchor.pixelX, p.hard_anchor.pixelY, width, height, wcsData);
+            p.ra = coords.ra;
+            p.dec = coords.dec;
+            p.registrationStatus = 'SYNCED';
+          });
+        }
+
+        // Geometric Grounding Validation
         if (nasaImg.sidecar) {
           const grounding = validateGroundingManifest(nasaImg, nasaImg.sidecar);
           if (!grounding.valid) {
@@ -238,26 +270,26 @@ const App: React.FC = () => {
             return;
           }
         }
+
+        analyzedPoints = aiPoints;
       }
 
-      setLoadingProgress(80);
-      let analyzedPoints: POI[];
-      if (missionId_key && prefetchedPoints.current[missionId_key]) {
-        analyzedPoints = prefetchedPoints.current[missionId_key];
-      } else {
-        analyzedPoints = await analyzeSpaceImage(base64, nasaImg);
-      }
-      if (!isMounted.current) return;
+      setLoadingProgress(100);
 
-      // 4. Update all state at once
+      // 5. Update state
       setImage(nasaImg);
       setPoints(analyzedPoints);
       setMissionId(prev => prev + 1);
-      setLoadingProgress(100);
-
       setLoading(false);
       isInitializing.current = false;
       retryTimeoutRef.current = window.setTimeout(() => setIsHyperjumping(false), 800);
+
+      // Automatically attempt to fetch deep scientific data in background
+      if (nasaImg.nasaId) {
+        fetchResearchData(nasaImg.nasaId).then(data => {
+          if (data) setDeepScanData(data);
+        });
+      }
     } catch (err) {
       console.error(err);
       if (!isMounted.current) return;
@@ -325,19 +357,29 @@ const App: React.FC = () => {
       {/* Mission Selector Overlay */}
       {showMissionSelector && (
         <MissionSelector
-          options={missionOptions}
+          options={missionOptions.filter(opt => prefetchedState[opt.id] !== 'error')}
           onSelect={(mission) => initGame(mission)}
           isLoading={isHyperjumping}
           prefetchedState={prefetchedState}
         />
       )}
 
-      {image && !showMissionSelector && (
+      {image && points.length > 0 && !loading && (
         <GameWorld
           key={`${image.url}-${missionId}`}
           image={image}
           points={points}
           onSectorComplete={() => setIsSectorComplete(true)}
+          onDeepScan={() => setShowDeepScan(true)}
+          sectorCompleted={isSectorComplete}
+        />
+      )}
+
+      {showDeepScan && image && deepScanData && (
+        <DeepScanArtifact
+          image={image}
+          data={deepScanData}
+          onClose={() => setShowDeepScan(false)}
         />
       )}
 
@@ -345,14 +387,14 @@ const App: React.FC = () => {
       <div className="absolute bottom-8 right-8 flex flex-col items-end gap-2 z-[60]">
         <button
           onClick={startMissionDiscovery}
-          disabled={isHyperjumping || isFetchingOptions || showMissionSelector}
+          disabled={isHyperjumping || isFetchingOptions || showMissionSelector || !isSectorComplete}
           className={`group relative overflow-hidden px-8 py-3 bg-slate-950 border transition-all duration-500 rounded-xl disabled:opacity-50 ${isSectorComplete
             ? 'border-cyan-400 text-white shadow-[0_0_20px_rgba(34,211,238,0.5)] animate-pulse'
-            : 'border-cyan-500/30 text-cyan-400 hover:border-cyan-400 hover:text-white hover:shadow-[0_0_20px_rgba(34,211,238,0.3)]'}`}
+            : 'border-slate-800 text-slate-500 cursor-not-allowed grayscale'}`}
         >
           <div className="absolute inset-0 bg-cyan-500/5 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
           <span className="relative z-10 font-black text-[11px] uppercase tracking-[0.25em]">
-            {isFetchingOptions ? 'Scanning Sectors...' : 'Next Mission Area'}
+            {!isSectorComplete ? 'Sector Locked' : isFetchingOptions ? 'Scanning Sectors...' : 'Next Mission Area'}
           </span>
         </button>
       </div>

@@ -5,17 +5,21 @@ import SpaceCharacter from './SpaceCharacter';
 import QuizModal from './QuizModal';
 import DiscoveryJournal from './DiscoveryJournal';
 import { generateQuiz } from '../services/geminiService';
+import { getWCSForNasaId } from '../services/mastService';
+import { pixelToRADec, formatCoords, WCSParams } from '../services/wcsService';
 
 interface Props {
   image: NASAImage;
   points: POI[];
   onSectorComplete?: () => void;
+  onDeepScan?: () => void;
+  sectorCompleted?: boolean;
 }
 
 const INTERACTION_RADIUS = 6; // percentage to enter/trigger
 const EXIT_RADIUS = 12; // percentage to exit/close (hysteresis)
 
-const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
+const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete, onDeepScan, sectorCompleted }) => {
   const [gameState, setGameState] = useState<GameState>({
     posX: 50,
     posY: 50,
@@ -36,7 +40,6 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
   const [exploredPOIs, setExploredPOIs] = useState<Set<string>>(new Set());
   const [showQuiz, setShowQuiz] = useState(false);
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
-  const [sectorCompleted, setSectorCompleted] = useState(false);
   const [quizScore, setQuizScore] = useState<{ score: number, total: number } | null>(null);
   const [quizCompleted, setQuizCompleted] = useState(false);
 
@@ -45,6 +48,9 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
   const [renderedSize, setRenderedSize] = useState({ width: 0, height: 0 });
   const [snappedSize, setSnappedSize] = useState({ width: 0, height: 0 });
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const [wcs, setWcs] = useState<WCSParams | null>(null);
+  const [hoverCoords, setHoverCoords] = useState<{ ra: number; dec: number } | null>(null);
+  const [isSyncingWCS, setIsSyncingWCS] = useState(false);
 
   const imageRef = useRef<HTMLImageElement>(null);
 
@@ -103,12 +109,35 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
 
   // Load image dimensions to calculate aspect ratio
   useEffect(() => {
-    const img = new Image();
-    img.onload = () => {
-      setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+    if (image.videoUrl) {
+      const vid = document.createElement('video');
+      vid.onloadedmetadata = () => {
+        setImageSize({ width: vid.videoWidth, height: vid.videoHeight });
+      };
+      vid.src = image.videoUrl;
+    } else {
+      const img = new Image();
+      img.onload = () => {
+        setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+      };
+      img.src = image.url;
+    }
+
+    // Fetch WCS Data from MAST
+    const fetchWCS = async () => {
+      if (!image.nasaId) return;
+      setIsSyncingWCS(true);
+      try {
+        const wcsData = await getWCSForNasaId(image.nasaId);
+        if (wcsData) setWcs(wcsData);
+      } catch (e) {
+        console.error("Failed to sync WCS:", e);
+      } finally {
+        setIsSyncingWCS(false);
+      }
     };
-    img.src = image.url;
-  }, [image.url]);
+    fetchWCS();
+  }, [image.url, image.nasaId]);
 
   // Handle Window Resize
   useEffect(() => {
@@ -253,7 +282,6 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
   // Check for sector completion
   useEffect(() => {
     if (exploredPOIs.size === validPoints.length && validPoints.length > 0 && !sectorCompleted) {
-      setSectorCompleted(true);
       playPing(880, 'sine', 0.2); // High-frequency success ping
       onSectorComplete?.();
       // Trigger quiz generation
@@ -302,10 +330,36 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
     };
   }, [isDragging, handleDrag]);
 
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!wcs || !imageRef.current) return;
+    const rect = imageRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
+      const coords = pixelToRADec(x, y, rect.width, rect.height, wcs);
+      setHoverCoords(coords);
+    } else {
+      setHoverCoords(null);
+    }
+  };
+
   // Dynamic height calculation for Tooltip
   const isTooltipFlipped = gameState.posY > 60;
-  // If flipped (above), max height is current Y (minus buffer). If normal (below), max height is 100 - Y (minus buffer).
   const tooltipMaxHeight = isTooltipFlipped ? gameState.posY - 10 : 90 - gameState.posY;
+
+  // Rigid Aspect Frame helper
+  const frameStyle: React.CSSProperties = {
+    position: 'relative',
+    margin: '0',
+    padding: '0',
+    maxWidth: '100%',
+    maxHeight: '100%',
+    aspectRatio: `${imageSize.width} / ${imageSize.height}`,
+    width: snappedSize.width > 0 ? undefined : '100%',
+    height: snappedSize.height > 0 ? undefined : 'auto',
+    contain: 'layout paint'
+  };
 
   return (
     <div
@@ -333,36 +387,46 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
             as the final rendered raster, with no intermediate scaling, cropping, rotation, or aspect adjustment. */}
         <div
           className="relative shadow-2xl flex-none overflow-hidden"
-          style={{
-            width: `${snappedSize.width}px`,
-            height: `${snappedSize.height}px`,
-            position: 'relative',
-            margin: '0',
-            padding: '0',
-            // If snappedSize is 0 (first mount), we use aspect-ratio as fallback
-            ...(snappedSize.width === 0 ? {
-              maxWidth: '100%',
-              maxHeight: '100%',
-              aspectRatio: `${imageSize.width} / ${imageSize.height}`,
-              width: '100%',
-              height: 'auto'
-            } : {})
-          }}
+          style={frameStyle}
         >
-          <img
-            ref={imageRef}
-            src={image.url}
-            className="block select-none m-0 p-0"
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'fill', // Force-align pixels to the snapped container manifest
-              imageRendering: 'pixelated',
-              filter: gameState.activePOI ? 'brightness(1.1) contrast(1.15)' : 'brightness(1) contrast(1)',
-              transition: 'filter 0.7s ease-out'
-            }}
-            draggable={false}
-          />
+          {image.videoUrl ? (
+            <video
+              ref={imageRef as any}
+              src={image.videoUrl}
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="block select-none m-0 p-0"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'fill',
+                imageRendering: 'pixelated',
+                filter: gameState.activePOI ? 'brightness(1.1) contrast(1.15)' : 'brightness(1) contrast(1)',
+                transition: 'filter 0.7s ease-out'
+              }}
+              onMouseMove={handleMouseMove}
+              onMouseLeave={() => setHoverCoords(null)}
+            />
+          ) : (
+            <img
+              ref={imageRef}
+              src={image.url}
+              className="block select-none m-0 p-0"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'fill', // Force-align pixels to the snapped container manifest
+                imageRendering: 'pixelated',
+                filter: gameState.activePOI ? 'brightness(1.1) contrast(1.15)' : 'brightness(1) contrast(1)',
+                transition: 'filter 0.7s ease-out'
+              }}
+              onMouseMove={handleMouseMove}
+              onMouseLeave={() => setHoverCoords(null)}
+              draggable={false}
+            />
+          )}
 
           {/* POI Markers and Tooltips - Now perfectly aligned in image space */}
           {validPoints.map(poi => {
@@ -385,11 +449,12 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
               <React.Fragment key={poi.id}>
                 {/* Overlay Space: Marker */}
                 <div
-                  className="absolute flex items-center justify-center transition-all duration-500 z-40 will-change-transform w-10 h-10"
+                  className="absolute flex items-center justify-center z-40 will-change-transform w-10 h-10"
                   style={{
                     position: 'absolute',
                     left: `${xPx - OFFSET}px`,
                     top: `${yPx - OFFSET}px`,
+                    transition: 'opacity 0.5s ease-out, transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
                     // Using translate3d(0,0,0) with sub-pixel values for high precision
                     transform: `translate3d(0, 0, 0) ${isNearby ? 'scale(1.2)' : 'scale(1)'}`,
                     opacity: isNearby ? 1 : 0.5,
@@ -482,16 +547,15 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
                           <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse"></span>
                           AI Triangulation Logic
                         </div>
+                        {poi.ra !== undefined && poi.dec !== undefined && (
+                          <div className="mb-2 px-1.5 py-1 bg-cyan-500/10 border-l border-cyan-500/40 font-mono text-[9px] text-cyan-200">
+                            COORD_SYNC: {formatCoords(poi.ra, poi.dec)}
+                          </div>
+                        )}
                         <p className="text-[10px] text-cyan-200/80 font-mono leading-relaxed italic">
                           "{poi.thoughtSignature}"
                         </p>
-                        {poi.registrationStatus && (
-                          <div className={`mt-1.5 text-[8px] font-black tracking-widest px-1.5 py-0.5 rounded border inline-block ${poi.registrationStatus === 'ADJUSTED'
-                            ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
-                            : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'}`}>
-                            {poi.registrationStatus === 'ADJUSTED' ? '⚠️ REGISTRATION ADJUSTED' : '✓ REGISTRATION SYNCED'}
-                          </div>
-                        )}
+
                       </div>
                     )}
                   </div>
@@ -527,8 +591,8 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
         <div className="absolute top-8 left-8 w-[196px] p-6 bg-slate-950/80 backdrop-blur-md border border-white/5 font-mono text-xs shadow-2xl ring-1 ring-cyan-500/20 z-[60] transition-opacity duration-300 animate-in fade-in slide-in-from-left-4 rounded-xl">
           <div className="text-cyan-400 font-black mb-3 tracking-widest text-[11px] border-b border-cyan-900 pb-2">VOYAGER TELEMETRY v2.6</div>
           <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 font-black">
-            <div className="text-cyan-500/90 text-[10px] tracking-tight">POS_LAT:</div><div className="text-white text-right drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]">{gameState.posX.toFixed(3)}°</div>
-            <div className="text-cyan-500/90 text-[10px] tracking-tight">POS_LNG:</div><div className="text-white text-right drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]">{gameState.posY.toFixed(3)}°</div>
+            <div className="text-cyan-500/90 text-[10px] tracking-tight">POS_LAT:</div><div className="text-white text-right drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]">{gameState.posY.toFixed(3)}°</div>
+            <div className="text-cyan-500/90 text-[10px] tracking-tight">POS_LNG:</div><div className="text-white text-right drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]">{gameState.posX.toFixed(3)}°</div>
           </div>
           <div className="mt-4 p-2 bg-white/5 rounded border border-white/5">
             <div className="text-[10px] text-cyan-300 uppercase font-black tracking-widest leading-relaxed mb-1">
@@ -538,6 +602,20 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
               {image.title}
             </div>
           </div>
+
+          {/* Deep Scan Trigger Button */}
+          {onDeepScan && (
+            <button
+              onClick={onDeepScan}
+              className="mt-3 w-full py-2 bg-slate-900 border border-cyan-500/30 rounded-lg flex flex-col items-center justify-center group hover:border-cyan-400 hover:bg-cyan-500/10 transition-all active:scale-95"
+            >
+              <div className="text-[8px] text-cyan-500 font-black tracking-[0.2em] group-hover:text-cyan-300">SYSTEM ANALYZER</div>
+              <div className="text-[10px] text-white font-bold group-hover:text-cyan-200 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-[ping_1.5s_infinite]" />
+                DEEP SCAN READOUT
+              </div>
+            </button>
+          )}
 
 
 
@@ -575,7 +653,14 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
                 <span className="text-[10px] text-slate-400 ml-2">({Math.round((quizScore.score / quizScore.total) * 100)}%)</span>
               </div>
             ) : sectorCompleted ? (
-              <div className="text-cyan-300 text-[11px] font-black italic tracking-tighter animate-pulse">🎯 SECTOR BRIEFING READY</div>
+              quizQuestions.length > 0 ? (
+                <div className="text-cyan-300 text-[11px] font-black italic tracking-tighter animate-pulse">🎯 SECTOR BRIEFING READY</div>
+              ) : (
+                <div className="text-cyan-500/50 text-[10px] font-mono animate-pulse flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-ping" />
+                  SYNCING KNOWLEDGE DATA...
+                </div>
+              )
             ) : (
               <div className="text-slate-400 text-[9px] font-mono">EXPLORATION IN PROGRESS...</div>
             )}
@@ -598,6 +683,39 @@ const GameWorld: React.FC<Props> = ({ image, points, onSectorComplete }) => {
       >
         {/* Grip Handle */}
         <div className="absolute -top-4 left-1/2 -translate-x-1/2 w-8 h-1 bg-slate-700/50 rounded-full mb-2"></div>
+
+        {/* Real-time WCS Readout */}
+        {wcs && (
+          <div className="absolute bottom-full mb-8 left-1/2 -translate-x-1/2 w-80 p-3 bg-slate-950/90 border border-cyan-500/30 rounded-lg backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] font-black text-cyan-400 tracking-widest uppercase">MAST FITS Sync: ACTIVE</span>
+              <div className="flex gap-1">
+                <div className="w-1 h-1 rounded-full bg-cyan-500 animate-pulse"></div>
+                <div className="w-1 h-1 rounded-full bg-cyan-700"></div>
+              </div>
+            </div>
+            <div className="font-mono text-[11px] text-white py-1.5 border-y border-white/5 flex flex-col gap-1">
+              {hoverCoords ? (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-cyan-500/70">WCS_COORD:</span>
+                    <span>{formatCoords(hoverCoords.ra, hoverCoords.dec)}</span>
+                  </div>
+                  <div className="flex justify-between text-[9px] text-slate-500">
+                    <span>EPOCH: J2000</span>
+                    <span>PROJ: {wcs.ctype1?.split('-')[0] || 'TAN'}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center text-slate-500 italic pb-1">HOVER OVER {image.videoUrl ? 'VIDEO' : 'IMAGE'} FOR RA/DEC</div>
+              )}
+            </div>
+            <div className="mt-2 text-[8px] text-cyan-500/50 font-mono flex justify-between uppercase">
+              <span>NASA_ID: {image.nasaId}</span>
+              <span>SC: {((wcs.cdelt1 || 0) * 3600).toFixed(4)}"/px</span>
+            </div>
+          </div>
+        )}
 
         {/* Up Arrow */}
         <button
