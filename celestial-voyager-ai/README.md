@@ -51,17 +51,14 @@ Traditional mapping systems often suffer from "UI Drift" where labels become det
 This project utilizes a custom grounding protocol to ensure POI markers stay perfectly centered on astronomical features regardless of screen resolution.
 
 ```typescript
-// Calculation of the Intensity-Weighted Center (IWC) for sub-pixel refinement
-const calculateIWC = (pixels: number[]) => {
-  let sumX = 0, sumY = 0, sumI2 = 0;
-  pixels.forEach((I, index) => {
-    const luminosity = Math.pow(I, 2);
-    sumX += x * luminosity;
-    sumY += y * luminosity;
-    sumI2 += luminosity;
-  });
-  return { x: sumX / sumI2, y: sumY / sumI2 };
+// Calculation of corrected coordinates using calibration data
+const remap = (p: number, min: number, max: number) => {
+  return ((p - min) / (max - min)) * 100;
 };
+
+// Applying Rigid Calibration Remapping:
+const correctedX = remap(p.x, calib.top_left.x, calib.top_right.x);
+const correctedY = remap(p.y, calib.top_left.y, calib.bottom_left.y);
 ```
 
 ### 🛰️ Multi-Source Dynamic Analysis
@@ -88,7 +85,7 @@ This repository was built using the **Antigravity Advanced Agentic Coding** fram
 - **Pixel-Perfect Grounding Protocol**: All POI anchors are derived from raw raster data, not the UI overlay, ensuring accuracy $\leq 0.1px$.
 - **Nano Banana Pro**: A specialized skill used for find the 'Blob' center of celestial objects using CoG calculations.
 - **Pure Celestial Protocol**: A verification rule to automatically filter and reject imagery containing human or mechanical contamination.
-- **Sub-pixel Refinement (IWC)**: Multi-iteration Quadratic Interpolation for vertex-peak luminosity detection.
+- **Calibration-Based Refinement**: Linear interpolation of AI keypoints to correct for internal coordinate drift.
 
 ---
 🚀 *Discover the universe, one sub-pixel at a time.*
